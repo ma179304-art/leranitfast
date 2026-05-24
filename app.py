@@ -225,12 +225,12 @@ def ask(question, history):
     q_vec = embed_model.encode([question]).tolist()[0]
 
     # Retrieve from Qdrant
-    hits = qdrant_client.query_points(
+    hits = qdrant_client.search(
         collection_name="medical_books",
-        query=q_vec,
+        query_vector=q_vec,
         limit=10,
         with_payload=True
-    ).points
+    )
 
     context_parts, sources = [], set()
     for hit in hits:
