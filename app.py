@@ -1,7 +1,7 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from groq import Groq
+from groq import Groq, AuthenticationError
 import time
 
 # ── PAGE CONFIG ──────────────────────────────────────────────
@@ -28,13 +28,13 @@ st.markdown("""
     --green:      #34d399;
     --green-dim:  #34d39920;
     --yellow:     #fbbf24;
+    --red:        #f87171;
     --text:       #e2e8f0;
     --text2:      #94a3b8;
     --text3:      #64748b;
     --user-bg:    #151f30;
     --ai-bg:      #0d1420;
     --fallback-bg:#1a1e2b;
-    --red:        #f87171;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -227,10 +227,10 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     border-radius: 20px;
 }
 
-/* ── CHAT INPUT ── */
+/* ── CHAT INPUT (question bar) ── */
 [data-testid="stChatInput"] {
-    background: var(--surface) !important;
-    border: 1px solid var(--border2) !important;
+    background: #1e2736 !important;          /* custom darker background */
+    border: 1px solid #2d3f5c !important;   /* subtle border */
     border-radius: 14px !important;
 }
 [data-testid="stChatInput"] textarea {
@@ -239,12 +239,16 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     font-family: 'Inter', sans-serif !important;
     font-size: 1rem !important;
 }
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #7b8ca3 !important;
+    opacity: 1 !important;
+}
 [data-testid="stChatInput"]:focus-within {
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 3px var(--accent-glow) !important;
 }
 
-/* ── SIDEBAR ── */
+/* ── SIDEBAR (repeated) ── */
 .sidebar-section { margin-bottom: 20px; }
 .sidebar-title {
     font-size: 0.72rem; font-weight: 600; letter-spacing: 1px;
@@ -316,7 +320,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 0.5rem !important; max-width: 860px; }
 
-/* Spinner */
+/* Spinner / thinking dots */
 .thinking {
     display: flex; align-items: center; gap: 10px;
     color: var(--text2); font-size: 0.9rem; padding: 14px 18px;
@@ -334,15 +338,32 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 """, unsafe_allow_html=True)
 
 
-# ── RESOURCES ────────────────────────────────────────────────
+# ── RESOURCES (with error handling) ──────────────────────────
 @st.cache_resource(show_spinner="Loading AI models...")
 def load_resources():
-    embed  = SentenceTransformer("all-MiniLM-L6-v2")
+    required_secrets = ["QDRANT_URL", "QDRANT_API_KEY", "GROQ_API_KEY"]
+    for sec in required_secrets:
+        if sec not in st.secrets or not st.secrets[sec]:
+            raise ValueError(f"Missing secret: {sec}. Please configure it in Streamlit secrets.")
+
+    embed = SentenceTransformer("all-MiniLM-L6-v2")
     qdrant = QdrantClient(url=st.secrets["QDRANT_URL"], api_key=st.secrets["QDRANT_API_KEY"])
-    groq   = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    try:
+        # Quick connection test
+        Groq(api_key=st.secrets["GROQ_API_KEY"]).models.list()
+    except AuthenticationError:
+        raise AuthenticationError("Invalid Groq API key. Please check your GROQ_API_KEY secret.")
+    except Exception as e:
+        raise ConnectionError(f"Could not connect to Groq: {e}")
+
+    groq = Groq(api_key=st.secrets["GROQ_API_KEY"])
     return embed, qdrant, groq
 
-embed_model, qdrant_client, groq_client = load_resources()
+try:
+    embed_model, qdrant_client, groq_client = load_resources()
+except Exception as e:
+    st.error(f"❌ **Configuration error:** {e}")
+    st.stop()
 
 @st.cache_data(show_spinner=False, ttl=300)
 def get_book_list():
@@ -363,20 +384,25 @@ def get_book_list():
 def ask(question, history):
     """Return (stream_generator, sources_set, is_fallback)"""
     q_vec = embed_model.encode([question]).tolist()[0]
-    hits  = qdrant_client.search(
-        collection_name="medical_books",
-        query_vector=q_vec,
-        limit=12,
-        with_payload=True
-    )
+    try:
+        hits = qdrant_client.search(
+            collection_name="medical_books",
+            query_vector=q_vec,
+            limit=12,
+            with_payload=True
+        )
+    except Exception as e:
+        error_msg = f"⚠️ Could not search the textbooks: {e}"
+        def error_stream():
+            yield error_msg
+        return error_stream(), set(), True
 
     context_parts, sources = [], set()
     for hit in hits:
         src = hit.payload.get("source", "Unknown")
         context_parts.append(f"[{src}]\n{hit.payload['text']}")
         sources.add(src.replace(".pdf", ""))
-    
-    # If no sources found, return a helpful fallback
+
     if not sources:
         fallback_text = (
             "I couldn't find any relevant information in the textbooks for your query. "
@@ -435,14 +461,25 @@ Answer as a senior medical consultant. Use this structure:
 Sources: {', '.join(sources)}"""
     })
 
-    stream = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        temperature=0.2,
-        max_tokens=2000,
-        stream=True
-    )
-    return stream, sources, False
+    try:
+        stream = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.2,
+            max_tokens=2000,
+            stream=True
+        )
+        return stream, sources, False
+    except AuthenticationError:
+        error_msg = "❌ **API key error:** The Groq API key is invalid. Please check your `GROQ_API_KEY` secret."
+        def error_stream():
+            yield error_msg
+        return error_stream(), set(), True
+    except Exception as e:
+        error_msg = f"⚠️ An error occurred while generating the answer: {str(e)}"
+        def error_stream():
+            yield error_msg
+        return error_stream(), set(), True
 
 
 # ── SESSION STATE ────────────────────────────────────────────
@@ -570,7 +607,6 @@ def set_prefill(q):
 if not st.session_state.messages:
     render_welcome()
 else:
-    # Determine the index of the last assistant message (for feedback & suggestions)
     last_assistant_idx = None
     for i in range(len(st.session_state.messages)-1, -1, -1):
         if st.session_state.messages[i]["role"] == "assistant":
@@ -585,9 +621,8 @@ else:
             msg.get("is_fallback", False)
         )
 
-        # Show feedback & suggestions only on the *last* assistant turn
         if msg["role"] == "assistant" and i == last_assistant_idx:
-            # ---------- feedback ----------
+            # Feedback
             if msg.get("feedback") is None:
                 col_fb1, col_fb2, _ = st.columns([0.1, 0.1, 0.8])
                 with col_fb1:
@@ -599,7 +634,7 @@ else:
             else:
                 st.caption(f"Feedback: {'👍 helpful' if msg['feedback']=='positive' else '👎 not helpful'}")
 
-            # ---------- suggestion buttons ----------
+            # Suggestion buttons
             st.markdown('<div class="suggestion-btns">', unsafe_allow_html=True)
             cols = st.columns(len(SUGGESTIONS))
             for idx, (label, question) in enumerate(SUGGESTIONS):
@@ -609,7 +644,7 @@ else:
             st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ── HANDLE PREFILL ───────────────────────────────────────────
+# ── CHAT INPUT ───────────────────────────────────────────────
 prompt = st.chat_input("Ask a clinical question (e.g. 'Management of acute appendicitis')")
 if st.session_state.prefill:
     prompt = st.session_state.prefill
@@ -618,11 +653,9 @@ if st.session_state.prefill:
 
 # ── PROCESS QUESTION ─────────────────────────────────────────
 if prompt:
-    # Show user bubble
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Thinking indicator
     thinking_placeholder = st.empty()
     thinking_placeholder.markdown("""
     <div class="thinking">
@@ -633,11 +666,9 @@ if prompt:
     </div>
     """, unsafe_allow_html=True)
 
-    # Get stream (or fallback)
     stream, sources, is_fallback = ask(prompt, st.session_state.history_pairs)
     thinking_placeholder.empty()
 
-    # Stream into a placeholder
     response_ph = st.empty()
     full_response = ""
     for chunk in stream:
@@ -646,13 +677,10 @@ if prompt:
             continue
         full_response += token
         response_ph.markdown(full_response + "▌")
-
     response_ph.empty()
 
-    # Render final formatted bubble (fallback styling if needed)
     render_message("assistant", full_response, sources, is_fallback)
 
-    # Save to session
     st.session_state.messages.append({
         "role": "assistant",
         "content": full_response,
