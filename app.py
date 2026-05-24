@@ -261,6 +261,12 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 """, unsafe_allow_html=True)
 
 
+# ── SESSION STATE INITIALIZATION ─────────────────────────────
+if "messages"      not in st.session_state: st.session_state.messages      = []
+if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
+if "input_query"   not in st.session_state: st.session_state.input_query   = ""
+
+
 # ── RESOURCES ────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading AI models...")
 def load_resources():
@@ -269,7 +275,12 @@ def load_resources():
     groq   = Groq(api_key=st.secrets["GROQ_API_KEY"])
     return embed, qdrant, groq
 
-embed_model, qdrant_client, groq_client = load_resources()
+# Wrap resource gathering in safety block to verify keys exist
+try:
+    embed_model, qdrant_client, groq_client = load_resources()
+except Exception as e:
+    st.error("🔑 Configuration Secret Error: Please verify that QDRANT_URL, QDRANT_API_KEY, and GROQ_API_KEY are configured in your secrets setup.")
+    st.stop()
 
 @st.cache_data(show_spinner=False, ttl=300)
 def get_book_list():
@@ -286,7 +297,7 @@ def get_book_list():
         return []
 
 
-# ── ASK ──────────────────────────────────────────────────────
+# ── ASK FUNCTION ─────────────────────────────────────────────
 def ask(question, history):
     q_vec = embed_model.encode([question]).tolist()[0]
     hits  = qdrant_client.search(
@@ -355,12 +366,6 @@ Sources: {', '.join(sources)}"""
     return stream, sources
 
 
-# ── SESSION STATE ────────────────────────────────────────────
-if "messages"      not in st.session_state: st.session_state.messages      = []
-if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
-if "input_query"   not in st.session_state: st.session_state.input_query   = ""
-
-
 # ── CONSTANTS / SAMPLE SUGGESTIONS ───────────────────────────
 SAMPLES = [
     ("🔪", "Management of acute appendicitis"),
@@ -387,7 +392,7 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # FIX: Replaced st.experimental_rerun() with stable st.rerun()
+    # Updated to use stable st.rerun() call safely
     if st.button("🗑️ Clear Conversation", use_container_width=True):
         st.session_state.messages      = []
         st.session_state.history_pairs = []
@@ -422,7 +427,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── WELCOME SCREEN & CHIP ENGINE ─────────────────────────────
+# ── WELCOME SCREEN CHIP ENGINE ───────────────────────────────
 def render_welcome():
     st.markdown("""
     <div class="welcome-wrap">
@@ -432,11 +437,10 @@ def render_welcome():
     </div>
     """, unsafe_allow_html=True)
     
-    # UI Prompt Suggestion Buttons/Chips instead of static list or rigid reboots
     cols = st.columns(2)
     for idx, (icon, text) in enumerate(SAMPLES):
         with cols[idx % 2]:
-            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
+            # Updated interaction pattern setting query inside session state safely before execution
             if st.button(f"{icon} {text}", key=f"chip_{idx}", use_container_width=True):
                 st.session_state.input_query = text
                 st.rerun()
@@ -463,7 +467,7 @@ def render_message(role, content, sources=None):
         st.markdown('</div></div>', unsafe_allow_html=True)
 
 
-# Show welcome or past history
+# Show historical bubbles or initial welcome chip grid
 if not st.session_state.messages:
     render_welcome()
 else:
@@ -471,27 +475,29 @@ else:
         render_message(msg["role"], msg["content"], msg.get("sources"))
 
 
-# ── INPUT W/ EXPLICIT PLACEHOLDER MICROCOPY ──────────────────
+# ── INPUT ENGINE AND INTERACTION CAPTURE ─────────────────────
 placeholder_text = "Ask a clinical question, e.g., 'Management of acute appendicitis'..."
-prompt = st.chat_input(placeholder=placeholder_text)
+chat_input_val = st.chat_input(placeholder=placeholder_text)
 
-
-# If user used a clickable suggestion card, capture it
+# Prioritize suggestion selection or keyboard layout forms safely
+prompt = None
 if st.session_state.input_query:
     prompt = st.session_state.input_query
-    st.session_state.input_query = "" # Reset state immediately
+    st.session_state.input_query = "" # Wipe state cleanly right after reading
+elif chat_input_val:
+    prompt = chat_input_val
 
 
 # ── ENGINE PROCESSING & AMBIGUITY HANDLING ────────────────────
 if prompt:
-    # Render user bubble
+    # Render user query immediately inside view context
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Intent Confidence and Validation Logic (Checks for vague / short ambiguous words)
+    # Intent Classifier Validation Rules (Catches short/ambiguous phrases)
     stripped_prompt = prompt.strip().lower()
     if len(stripped_prompt.split()) <= 1 or stripped_prompt in ["appendicitis", "stomach", "cushing", "analgesia"]:
-        # Ambiguity Clarification Block
+        # Ambiguity Fallback UI Component Integration
         clarification_text = f"""
         ### 🔍 Clarification Needed
         I detected your query regarding **"{prompt}"**, but it is broad. To provide an accurate, textbook-grounded answer, could you please specify your clinical objective?
@@ -503,28 +509,25 @@ if prompt:
         render_message("assistant", clarification_text)
         st.session_state.messages.append({"role": "assistant", "content": clarification_text})
         
-        # Micro-interactions for interactive options
+        # Microcopy Option Selection Blocks
         st.markdown('<div class="suggestion-container">', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("📋 Diagnostic Criteria", key="clarify_diag", use_container_width=True):
                 st.session_state.input_query = f"Diagnostic criteria and workup for {prompt}"
                 st.rerun()
         with c2:
-            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("🔪 Surgical Management", key="clarify_surg", use_container_width=True):
                 st.session_state.input_query = f"Management steps and treatment for acute {prompt}"
                 st.rerun()
         with c3:
-            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("🧬 Pathophysiology", key="clarify_path", use_container_width=True):
                 st.session_state.input_query = f"Pathophysiology and anatomy of {prompt}"
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     else:
-        # High confidence flow - Trigger standard async lookup with latency feedback UI spinner
+        # High Confidence Execution Stream Flow
         thinking_placeholder = st.empty()
         thinking_placeholder.markdown("""
         <div class="thinking">
@@ -540,7 +543,7 @@ if prompt:
             stream, sources = ask(prompt, st.session_state.history_pairs)
             thinking_placeholder.empty()
 
-            # Stream data to prevent information walls and control layout bounds
+            # Stream buffer tokens to control progressive scrolling boundaries
             response_ph = st.empty()
             full_response = ""
             for chunk in stream:
@@ -550,10 +553,10 @@ if prompt:
 
             response_ph.empty()
 
-            # Final clean render inside custom CSS component
+            # Render structured text components beautifully
             render_message("assistant", full_response, sources)
 
-            # Save state
+            # Keep historical state tracks inside application layer cache
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": full_response,
@@ -563,9 +566,8 @@ if prompt:
             
         except Exception as e:
             thinking_placeholder.empty()
-            error_msg = "⚠️ **System Notice:** I encountered a latency or API configuration error while fetching answers. Please verify your credentials or try rephrasing your question."
+            error_msg = f"⚠️ **System Notice:** I encountered a latency or API configuration error while fetching answers. Please verify your credentials or try rephrasing your question."
             render_message("assistant", error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
             
-        # FIX: Replaced st.experimental_rerun() with stable st.rerun()
         st.rerun()
