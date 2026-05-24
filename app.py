@@ -209,11 +209,11 @@ def get_book_list():
         results = qdrant_client.scroll(
             collection_name="medical_books",
             limit=500,
-            with_payload=True
+            with_payload=["source"]
         )
         books = set()
         for point in results[0]:
-            if "source" in point.payload:
+            if point.payload and "source" in point.payload:
                 books.add(point.payload["source"])
         return sorted(books)
     except:
@@ -225,12 +225,12 @@ def ask(question, history):
     q_vec = embed_model.encode([question]).tolist()[0]
 
     # Retrieve from Qdrant
-    hits = qdrant_client.search(
+    hits = qdrant_client.query_points(
         collection_name="medical_books",
-        query_vector=q_vec,
+        query=q_vec,
         limit=10,
         with_payload=True
-    )
+    ).points
 
     context_parts, sources = [], set()
     for hit in hits:
