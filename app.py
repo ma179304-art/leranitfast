@@ -105,7 +105,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 /* ── WELCOME SCREEN ── */
 .welcome-wrap {
     text-align: center;
-    padding: 60px 20px 40px;
+    padding: 40px 20px 20px;
     max-width: 600px;
     margin: 0 auto;
 }
@@ -116,31 +116,8 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 }
 .welcome-wrap p {
     font-size: 1rem; color: var(--text2);
-    line-height: 1.6; margin-bottom: 32px;
+    line-height: 1.6; margin-bottom: 24px;
 }
-.sample-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    text-align: left;
-}
-.sample-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 0.88rem;
-    color: var(--text2);
-    line-height: 1.4;
-}
-.sample-card:hover {
-    border-color: var(--accent);
-    color: var(--text);
-    background: var(--surface2);
-}
-.sample-card .icon { font-size: 1.1rem; margin-bottom: 6px; display: block; }
 
 /* ── CHAT BUBBLES ── */
 .msg-row { display: flex; margin: 10px 0; align-items: flex-start; gap: 12px; }
@@ -232,29 +209,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     box-shadow: 0 0 0 3px var(--accent-glow) !important;
 }
 
-/* ── SIDEBAR ── */
-.sidebar-section { margin-bottom: 20px; }
-.sidebar-title {
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 1px;
-    color: var(--text3); text-transform: uppercase; margin-bottom: 10px;
-}
-.sb-btn {
-    display: block; width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 9px 12px;
-    color: var(--text2) !important;
-    font-size: 0.85rem;
-    cursor: pointer;
-    text-align: left;
-    margin-bottom: 6px;
-    transition: all 0.15s;
-    line-height: 1.4;
-}
-.sb-btn:hover { border-color: var(--accent); color: var(--text) !important; }
-
-/* Buttons */
+/* Buttons style overriding */
 .stButton button {
     background: var(--surface2) !important;
     color: var(--text2) !important;
@@ -268,6 +223,15 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 .stButton button:hover {
     border-color: var(--accent) !important;
     color: var(--text) !important;
+}
+
+/* Inline suggestion chips layout */
+.suggestion-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 10px;
 }
 
 /* Scrollbar */
@@ -394,10 +358,10 @@ Sources: {', '.join(sources)}"""
 # ── SESSION STATE ────────────────────────────────────────────
 if "messages"      not in st.session_state: st.session_state.messages      = []
 if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
-if "prefill"       not in st.session_state: st.session_state.prefill        = None
+if "input_query"   not in st.session_state: st.session_state.input_query   = ""
 
 
-# ── SIDEBAR ──────────────────────────────────────────────────
+# ── CONSTANTS / SAMPLE SUGGESTIONS ───────────────────────────
 SAMPLES = [
     ("🔪", "Management of acute appendicitis"),
     ("🩸", "Blood supply of the stomach"),
@@ -409,6 +373,8 @@ SAMPLES = [
     ("📋", "Pre-operative workup for elective surgery"),
 ]
 
+
+# ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
     books = get_book_list()
 
@@ -420,25 +386,18 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown('<div class="sidebar-title">💡 Sample Questions</div>', unsafe_allow_html=True)
-    for icon, sample in SAMPLES:
-        if st.button(f"{icon}  {sample}", key=sample, use_container_width=True):
-            st.session_state.prefill = sample
-            st.rerun()
-
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear", use_container_width=True):
-            st.session_state.messages      = []
-            st.session_state.history_pairs = []
-            st.rerun()
-    with col2:
-        st.markdown(
-            f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
-            f'{len(st.session_state.messages)//2} questions</div>',
-            unsafe_allow_html=True
-        )
+    
+    if st.button("🗑️ Clear Conversation", use_container_width=True):
+        st.session_state.messages      = []
+        st.session_state.history_pairs = []
+        st.session_state.input_query   = ""
+        st.experimental_rerun()
+        
+    st.markdown(
+        f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
+        f'{len(st.session_state.messages)//2} questions asked</div>',
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         '<div style="color:var(--text3);font-size:0.7rem;margin-top:20px;line-height:1.6">'
@@ -462,15 +421,23 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── WELCOME SCREEN ───────────────────────────────────────────
+# ── WELCOME SCREEN & CHIP ENGINE ─────────────────────────────
 def render_welcome():
     st.markdown("""
     <div class="welcome-wrap">
         <div class="welcome-icon">📖</div>
         <h2>What would you like to know?</h2>
-        <p>Ask any clinical question. I'll answer based on your medical textbook library with structured, consultant-level responses.</p>
+        <p>Ask any clinical question or tap a high-frequency sample context below to populate the guidance prompt engine.</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # UI Prompt Suggestion Buttons/Chips instead of static list or rigid reboots
+    cols = st.columns(2)
+    for idx, (icon, text) in enumerate(SAMPLES):
+        with cols[idx % 2]:
+            if st.button(f"{icon} {text}", key=f"chip_{idx}", use_container_width=True):
+                st.session_state.input_query = text
+                st.experimental_rerun()
 
 
 # ── RENDER MESSAGES ──────────────────────────────────────────
@@ -486,7 +453,7 @@ def render_message(role, content, sources=None):
         if sources:
             tags = "".join(f'<span class="src-tag">📖 {s}</span>' for s in sources)
             src_html = f'<div class="sources-bar"><span class="src-label">Sources:</span>{tags}</div>'
-        # Use st.markdown for proper markdown rendering inside the bubble
+            
         st.markdown(f'<div class="msg-row"><div class="avatar ai-av">🤖</div><div class="bubble ai">', unsafe_allow_html=True)
         st.markdown(content)
         if src_html:
@@ -494,7 +461,7 @@ def render_message(role, content, sources=None):
         st.markdown('</div></div>', unsafe_allow_html=True)
 
 
-# Show welcome or history
+# Show welcome or past history
 if not st.session_state.messages:
     render_welcome()
 else:
@@ -502,51 +469,98 @@ else:
         render_message(msg["role"], msg["content"], msg.get("sources"))
 
 
-# ── HANDLE PREFILL ───────────────────────────────────────────
-prompt = st.chat_input("Ask a clinical question...")
-if st.session_state.prefill:
-    prompt = st.session_state.prefill
-    st.session_state.prefill = None
+# ── INPUT W/ EXPLICIT PLACEHOLDER MICROCOPY ──────────────────
+# UX improvement: User-friendly microcopy as guidance placeholder text
+placeholder_text = "Ask a clinical question, e.g., 'Management of acute appendicitis'..."
+prompt = st.chat_input(placeholder=placeholder_text)
 
 
-# ── PROCESS QUESTION ─────────────────────────────────────────
+# If user used a clickable suggestion card, capture it
+if st.session_state.input_query:
+    prompt = st.session_state.input_query
+    st.session_state.input_query = "" # Reset state immediately
+
+
+# ── ENGINE PROCESSING & AMBIGUITY HANDLING ────────────────────
 if prompt:
-    # Show user bubble
+    # Render user bubble
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Thinking indicator
-    thinking_placeholder = st.empty()
-    thinking_placeholder.markdown("""
-    <div class="thinking">
-        <div class="thinking-dots">
-            <span></span><span></span><span></span>
+    # Intent Confidence and Validation Logic (Checks for vague / short ambiguous words)
+    stripped_prompt = prompt.strip().lower()
+    if len(stripped_prompt.split()) <= 1 or stripped_prompt in ["appendicitis", "stomach", "cushing", "analgesia"]:
+        # Ambiguity Clarification Block -> Targeted Recovery rather than "I don't understand"
+        clarification_text = f"""
+        ### 🔍 Clarification Needed
+        I detected your query regarding **"{prompt}"**, but it is broad. To provide an accurate, textbook-grounded answer, could you please specify your clinical objective?
+        
+        * Are you looking for the **diagnostic criteria and workflows**?
+        * Are you inquiring about the **acute surgical intervention and management**?
+        * Or are you exploring the **anatomy/pathophysiology** behind it?
+        """
+        render_message("assistant", clarification_text)
+        st.session_state.messages.append({"role": "assistant", "content": clarification_text})
+        
+        # Micro-interactions for interactive options
+        st.markdown('<div class="suggestion-container">', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("📋 Diagnostic Criteria", key="clarify_diag", use_container_width=True):
+                st.session_state.input_query = f"Diagnostic criteria and workup for {prompt}"
+                st.experimental_rerun()
+        with c2:
+            if st.button("🔪 Surgical Management", key="clarify_surg", use_container_width=True):
+                st.session_state.input_query = f"Management steps and treatment for acute {prompt}"
+                st.experimental_rerun()
+        with c3:
+            if st.button("🧬 Pathophysiology", key="clarify_path", use_container_width=True):
+                st.session_state.input_query = f"Pathophysiology and anatomy of {prompt}"
+                st.experimental_rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        # High confidence flow - Trigger standard async lookup with latency feedback UI spinner
+        thinking_placeholder = st.empty()
+        thinking_placeholder.markdown("""
+        <div class="thinking">
+            <div class="thinking-dots">
+                <span></span><span></span><span></span>
+            </div>
+            Searching textbook databases and synthesizing structured consultant response...
         </div>
-        Searching textbooks and generating answer...
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    # Get stream
-    stream, sources = ask(prompt, st.session_state.history_pairs)
-    thinking_placeholder.empty()
+        try:
+            # Query backend vector database and Groq
+            stream, sources = ask(prompt, st.session_state.history_pairs)
+            thinking_placeholder.empty()
 
-    # Stream into a placeholder
-    response_ph = st.empty()
-    full_response = ""
-    for chunk in stream:
-        token = chunk.choices[0].delta.content or ""
-        full_response += token
-        response_ph.markdown(full_response + "▌")
+            # Stream data to prevent information walls and control layout bounds
+            response_ph = st.empty()
+            full_response = ""
+            for chunk in stream:
+                token = chunk.choices[0].delta.content or ""
+                full_response += token
+                response_ph.markdown(full_response + "▌")
 
-    response_ph.empty()
+            response_ph.empty()
 
-    # Render final formatted bubble
-    render_message("assistant", full_response, sources)
+            # Final clean render inside custom CSS component
+            render_message("assistant", full_response, sources)
 
-    # Save
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": full_response,
-        "sources": list(sources)
-    })
-    st.session_state.history_pairs.append({"q": prompt, "a": full_response})
+            # Save state
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": full_response,
+                "sources": list(sources)
+            })
+            st.session_state.history_pairs.append({"q": prompt, "a": full_response})
+            
+        except Exception as e:
+            thinking_placeholder.empty()
+            error_msg = "⚠️ **System Notice:** I encountered a latency or API configuration error while fetching answers. Please verify your credentials or try rephrasing your question."
+            render_message("assistant", error_msg)
+            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            
+        st.experimental_rerun()
