@@ -27,11 +27,13 @@ st.markdown("""
     --accent-glow:#4f9eff30;
     --green:      #34d399;
     --green-dim:  #34d39920;
+    --yellow:     #fbbf24;
     --text:       #e2e8f0;
     --text2:      #94a3b8;
     --text3:      #64748b;
     --user-bg:    #151f30;
     --ai-bg:      #0d1420;
+    --fallback-bg:#1a1e2b;
     --red:        #f87171;
 }
 
@@ -105,7 +107,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 /* ── WELCOME SCREEN ── */
 .welcome-wrap {
     text-align: center;
-    padding: 40px 20px 20px;
+    padding: 60px 20px 40px;
     max-width: 600px;
     margin: 0 auto;
 }
@@ -116,8 +118,37 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 }
 .welcome-wrap p {
     font-size: 1rem; color: var(--text2);
-    line-height: 1.6; margin-bottom: 24px;
+    line-height: 1.6; margin-bottom: 32px;
 }
+.welcome-wrap .disclaimer {
+    font-size: 0.75rem; color: var(--text3);
+    margin-top: 20px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+}
+.sample-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    text-align: left;
+}
+.sample-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.88rem;
+    color: var(--text2);
+    line-height: 1.4;
+}
+.sample-card:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--surface2);
+}
+.sample-card .icon { font-size: 1.1rem; margin-bottom: 6px; display: block; }
 
 /* ── CHAT BUBBLES ── */
 .msg-row { display: flex; margin: 10px 0; align-items: flex-start; gap: 12px; }
@@ -152,6 +183,10 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     border-top-left-radius: 4px;
     border-left: 3px solid var(--accent);
     color: var(--text);
+}
+.bubble.ai.fallback {
+    border-left-color: var(--yellow);
+    background: var(--fallback-bg);
 }
 
 /* Markdown inside ai bubble */
@@ -209,7 +244,29 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     box-shadow: 0 0 0 3px var(--accent-glow) !important;
 }
 
-/* Buttons style overriding */
+/* ── SIDEBAR ── */
+.sidebar-section { margin-bottom: 20px; }
+.sidebar-title {
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 1px;
+    color: var(--text3); text-transform: uppercase; margin-bottom: 10px;
+}
+.sb-btn {
+    display: block; width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--text2) !important;
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+    margin-bottom: 6px;
+    transition: all 0.15s;
+    line-height: 1.4;
+}
+.sb-btn:hover { border-color: var(--accent); color: var(--text) !important; }
+
+/* Buttons */
 .stButton button {
     background: var(--surface2) !important;
     color: var(--text2) !important;
@@ -225,13 +282,29 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     color: var(--text) !important;
 }
 
-/* Inline suggestion chips layout */
-.suggestion-container {
+/* Feedback and suggestion buttons */
+.feedback-btns {
+    margin-top: 6px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.feedback-btns .stButton button {
+    padding: 4px 10px !important;
+    font-size: 0.8rem !important;
+}
+.suggestion-btns {
+    margin-top: 8px;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-top: 10px;
+    gap: 6px;
+}
+.suggestion-btns .stButton button {
+    font-size: 0.78rem !important;
+    padding: 4px 12px !important;
+    background: var(--surface) !important;
+    border-color: var(--border2) !important;
+    color: var(--accent) !important;
 }
 
 /* Scrollbar */
@@ -261,12 +334,6 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 """, unsafe_allow_html=True)
 
 
-# ── SESSION STATE INITIALIZATION ─────────────────────────────
-if "messages"      not in st.session_state: st.session_state.messages      = []
-if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
-if "input_query"   not in st.session_state: st.session_state.input_query   = ""
-
-
 # ── RESOURCES ────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Loading AI models...")
 def load_resources():
@@ -275,12 +342,7 @@ def load_resources():
     groq   = Groq(api_key=st.secrets["GROQ_API_KEY"])
     return embed, qdrant, groq
 
-# Wrap resource gathering in safety block to verify keys exist
-try:
-    embed_model, qdrant_client, groq_client = load_resources()
-except Exception as e:
-    st.error("🔑 Configuration Secret Error: Please verify that QDRANT_URL, QDRANT_API_KEY, and GROQ_API_KEY are configured in your secrets setup.")
-    st.stop()
+embed_model, qdrant_client, groq_client = load_resources()
 
 @st.cache_data(show_spinner=False, ttl=300)
 def get_book_list():
@@ -297,8 +359,9 @@ def get_book_list():
         return []
 
 
-# ── ASK FUNCTION ─────────────────────────────────────────────
+# ── ASK ──────────────────────────────────────────────────────
 def ask(question, history):
+    """Return (stream_generator, sources_set, is_fallback)"""
     q_vec = embed_model.encode([question]).tolist()[0]
     hits  = qdrant_client.search(
         collection_name="medical_books",
@@ -312,6 +375,22 @@ def ask(question, history):
         src = hit.payload.get("source", "Unknown")
         context_parts.append(f"[{src}]\n{hit.payload['text']}")
         sources.add(src.replace(".pdf", ""))
+    
+    # If no sources found, return a helpful fallback
+    if not sources:
+        fallback_text = (
+            "I couldn't find any relevant information in the textbooks for your query. "
+            "This might be because the topic is too specific or not covered in the available books.\n\n"
+            "**Suggestions to rephrase:**\n"
+            "- Use general medical terms\n"
+            "- Ask about symptoms, diagnosis, or treatment\n"
+            "- Try one of the sample questions from the sidebar\n\n"
+            "Here are some follow‑up ideas you can click:"
+        )
+        def fallback_stream():
+            yield fallback_text
+        return fallback_stream(), set(), True
+
     context = "\n\n---\n\n".join(context_parts)
 
     messages = [{
@@ -363,10 +442,16 @@ Sources: {', '.join(sources)}"""
         max_tokens=2000,
         stream=True
     )
-    return stream, sources
+    return stream, sources, False
 
 
-# ── CONSTANTS / SAMPLE SUGGESTIONS ───────────────────────────
+# ── SESSION STATE ────────────────────────────────────────────
+if "messages"      not in st.session_state: st.session_state.messages      = []
+if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
+if "prefill"       not in st.session_state: st.session_state.prefill        = None
+
+
+# ── SIDEBAR ──────────────────────────────────────────────────
 SAMPLES = [
     ("🔪", "Management of acute appendicitis"),
     ("🩸", "Blood supply of the stomach"),
@@ -378,8 +463,6 @@ SAMPLES = [
     ("📋", "Pre-operative workup for elective surgery"),
 ]
 
-
-# ── SIDEBAR ──────────────────────────────────────────────────
 with st.sidebar:
     books = get_book_list()
 
@@ -391,23 +474,29 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-    
-    # Updated to use stable st.rerun() call safely
-    if st.button("🗑️ Clear Conversation", use_container_width=True):
-        st.session_state.messages      = []
-        st.session_state.history_pairs = []
-        st.session_state.input_query   = ""
-        st.rerun()
-        
-    st.markdown(
-        f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
-        f'{len(st.session_state.messages)//2} questions asked</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown('<div class="sidebar-title">💡 Sample Questions</div>', unsafe_allow_html=True)
+    for icon, sample in SAMPLES:
+        if st.button(f"{icon}  {sample}", key=sample, use_container_width=True):
+            st.session_state.prefill = sample
+            st.rerun()
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ Clear", use_container_width=True):
+            st.session_state.messages      = []
+            st.session_state.history_pairs = []
+            st.rerun()
+    with col2:
+        st.markdown(
+            f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
+            f'{len(st.session_state.messages)//2} questions</div>',
+            unsafe_allow_html=True
+        )
 
     st.markdown(
         '<div style="color:var(--text3);font-size:0.7rem;margin-top:20px;line-height:1.6">'
-        'For educational use only.<br>Not a substitute for clinical judgment.</div>',
+        'For educational use only.<br>Not a substitute for clinical judgment.<br>Do not enter personal health information.</div>',
         unsafe_allow_html=True
     )
 
@@ -427,27 +516,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── WELCOME SCREEN CHIP ENGINE ───────────────────────────────
+# ── WELCOME SCREEN ───────────────────────────────────────────
 def render_welcome():
     st.markdown("""
     <div class="welcome-wrap">
         <div class="welcome-icon">📖</div>
         <h2>What would you like to know?</h2>
-        <p>Ask any clinical question or tap a high-frequency sample context below to populate the guidance prompt engine.</p>
+        <p>Ask any clinical question. I'll answer based on your medical textbook library with structured, consultant‑level responses.</p>
+        <div class="disclaimer">
+            Your questions are processed securely. No personal data is stored. This tool is for educational use only and does not replace professional medical advice.
+        </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    cols = st.columns(2)
-    for idx, (icon, text) in enumerate(SAMPLES):
-        with cols[idx % 2]:
-            # Updated interaction pattern setting query inside session state safely before execution
-            if st.button(f"{icon} {text}", key=f"chip_{idx}", use_container_width=True):
-                st.session_state.input_query = text
-                st.rerun()
 
 
 # ── RENDER MESSAGES ──────────────────────────────────────────
-def render_message(role, content, sources=None):
+def render_message(role, content, sources=None, is_fallback=False):
     if role == "user":
         st.markdown(f"""
         <div class="msg-row user">
@@ -455,119 +539,125 @@ def render_message(role, content, sources=None):
             <div class="bubble user">{content}</div>
         </div>""", unsafe_allow_html=True)
     else:
+        bubble_class = "bubble ai" + (" fallback" if is_fallback else "")
         src_html = ""
         if sources:
             tags = "".join(f'<span class="src-tag">📖 {s}</span>' for s in sources)
             src_html = f'<div class="sources-bar"><span class="src-label">Sources:</span>{tags}</div>'
-            
-        st.markdown(f'<div class="msg-row"><div class="avatar ai-av">🤖</div><div class="bubble ai">', unsafe_allow_html=True)
+        st.markdown(f'<div class="msg-row"><div class="avatar ai-av">🤖</div><div class="{bubble_class}">', unsafe_allow_html=True)
         st.markdown(content)
         if src_html:
             st.markdown(src_html, unsafe_allow_html=True)
         st.markdown('</div></div>', unsafe_allow_html=True)
 
 
-# Show historical bubbles or initial welcome chip grid
+# ── FEEDBACK & SUGGESTION HELPERS ─────────────────────────────
+SUGGESTIONS = [
+    ("Explain more", "Explain more details about this topic"),
+    ("Risk factors", "What are the risk factors?"),
+    ("Treatment", "How is it treated?"),
+    ("Complications", "What are the complications?")
+]
+
+def set_feedback(idx, val):
+    st.session_state.messages[idx]["feedback"] = val
+
+def set_prefill(q):
+    st.session_state.prefill = q
+
+
+# ── DISPLAY MESSAGES ─────────────────────────────────────────
 if not st.session_state.messages:
     render_welcome()
 else:
-    for msg in st.session_state.messages:
-        render_message(msg["role"], msg["content"], msg.get("sources"))
+    # Determine the index of the last assistant message (for feedback & suggestions)
+    last_assistant_idx = None
+    for i in range(len(st.session_state.messages)-1, -1, -1):
+        if st.session_state.messages[i]["role"] == "assistant":
+            last_assistant_idx = i
+            break
+
+    for i, msg in enumerate(st.session_state.messages):
+        render_message(
+            msg["role"],
+            msg["content"],
+            msg.get("sources"),
+            msg.get("is_fallback", False)
+        )
+
+        # Show feedback & suggestions only on the *last* assistant turn
+        if msg["role"] == "assistant" and i == last_assistant_idx:
+            # ---------- feedback ----------
+            if msg.get("feedback") is None:
+                col_fb1, col_fb2, _ = st.columns([0.1, 0.1, 0.8])
+                with col_fb1:
+                    st.button("👍", key=f"fb_up_{i}", help="Helpful",
+                              on_click=set_feedback, args=(i, "positive"))
+                with col_fb2:
+                    st.button("👎", key=f"fb_down_{i}", help="Not helpful",
+                              on_click=set_feedback, args=(i, "negative"))
+            else:
+                st.caption(f"Feedback: {'👍 helpful' if msg['feedback']=='positive' else '👎 not helpful'}")
+
+            # ---------- suggestion buttons ----------
+            st.markdown('<div class="suggestion-btns">', unsafe_allow_html=True)
+            cols = st.columns(len(SUGGESTIONS))
+            for idx, (label, question) in enumerate(SUGGESTIONS):
+                with cols[idx]:
+                    st.button(label, key=f"sugg_{i}_{idx}",
+                              on_click=set_prefill, args=(question,))
+            st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ── INPUT ENGINE AND INTERACTION CAPTURE ─────────────────────
-placeholder_text = "Ask a clinical question, e.g., 'Management of acute appendicitis'..."
-chat_input_val = st.chat_input(placeholder=placeholder_text)
-
-# Prioritize suggestion selection or keyboard layout forms safely
-prompt = None
-if st.session_state.input_query:
-    prompt = st.session_state.input_query
-    st.session_state.input_query = "" # Wipe state cleanly right after reading
-elif chat_input_val:
-    prompt = chat_input_val
+# ── HANDLE PREFILL ───────────────────────────────────────────
+prompt = st.chat_input("Ask a clinical question (e.g. 'Management of acute appendicitis')")
+if st.session_state.prefill:
+    prompt = st.session_state.prefill
+    st.session_state.prefill = None
 
 
-# ── ENGINE PROCESSING & AMBIGUITY HANDLING ────────────────────
+# ── PROCESS QUESTION ─────────────────────────────────────────
 if prompt:
-    # Render user query immediately inside view context
+    # Show user bubble
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Intent Classifier Validation Rules (Catches short/ambiguous phrases)
-    stripped_prompt = prompt.strip().lower()
-    if len(stripped_prompt.split()) <= 1 or stripped_prompt in ["appendicitis", "stomach", "cushing", "analgesia"]:
-        # Ambiguity Fallback UI Component Integration
-        clarification_text = f"""
-        ### 🔍 Clarification Needed
-        I detected your query regarding **"{prompt}"**, but it is broad. To provide an accurate, textbook-grounded answer, could you please specify your clinical objective?
-        
-        * Are you looking for the **diagnostic criteria and workflows**?
-        * Are you inquiring about the **acute surgical intervention and management**?
-        * Or are you exploring the **anatomy/pathophysiology** behind it?
-        """
-        render_message("assistant", clarification_text)
-        st.session_state.messages.append({"role": "assistant", "content": clarification_text})
-        
-        # Microcopy Option Selection Blocks
-        st.markdown('<div class="suggestion-container">', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("📋 Diagnostic Criteria", key="clarify_diag", use_container_width=True):
-                st.session_state.input_query = f"Diagnostic criteria and workup for {prompt}"
-                st.rerun()
-        with c2:
-            if st.button("🔪 Surgical Management", key="clarify_surg", use_container_width=True):
-                st.session_state.input_query = f"Management steps and treatment for acute {prompt}"
-                st.rerun()
-        with c3:
-            if st.button("🧬 Pathophysiology", key="clarify_path", use_container_width=True):
-                st.session_state.input_query = f"Pathophysiology and anatomy of {prompt}"
-                st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    else:
-        # High Confidence Execution Stream Flow
-        thinking_placeholder = st.empty()
-        thinking_placeholder.markdown("""
-        <div class="thinking">
-            <div class="thinking-dots">
-                <span></span><span></span><span></span>
-            </div>
-            Searching textbook databases and synthesizing structured consultant response...
+    # Thinking indicator
+    thinking_placeholder = st.empty()
+    thinking_placeholder.markdown("""
+    <div class="thinking">
+        <div class="thinking-dots">
+            <span></span><span></span><span></span>
         </div>
-        """, unsafe_allow_html=True)
+        Searching textbooks and generating answer...
+    </div>
+    """, unsafe_allow_html=True)
 
-        try:
-            # Query backend vector database and Groq
-            stream, sources = ask(prompt, st.session_state.history_pairs)
-            thinking_placeholder.empty()
+    # Get stream (or fallback)
+    stream, sources, is_fallback = ask(prompt, st.session_state.history_pairs)
+    thinking_placeholder.empty()
 
-            # Stream buffer tokens to control progressive scrolling boundaries
-            response_ph = st.empty()
-            full_response = ""
-            for chunk in stream:
-                token = chunk.choices[0].delta.content or ""
-                full_response += token
-                response_ph.markdown(full_response + "▌")
+    # Stream into a placeholder
+    response_ph = st.empty()
+    full_response = ""
+    for chunk in stream:
+        token = chunk.choices[0].delta.content if hasattr(chunk, 'choices') else chunk
+        if token is None:
+            continue
+        full_response += token
+        response_ph.markdown(full_response + "▌")
 
-            response_ph.empty()
+    response_ph.empty()
 
-            # Render structured text components beautifully
-            render_message("assistant", full_response, sources)
+    # Render final formatted bubble (fallback styling if needed)
+    render_message("assistant", full_response, sources, is_fallback)
 
-            # Keep historical state tracks inside application layer cache
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": full_response,
-                "sources": list(sources)
-            })
-            st.session_state.history_pairs.append({"q": prompt, "a": full_response})
-            
-        except Exception as e:
-            thinking_placeholder.empty()
-            error_msg = f"⚠️ **System Notice:** I encountered a latency or API configuration error while fetching answers. Please verify your credentials or try rephrasing your question."
-            render_message("assistant", error_msg)
-            st.session_state.messages.append({"role": "assistant", "content": error_msg})
-            
-        st.rerun()
+    # Save to session
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_response,
+        "sources": list(sources),
+        "is_fallback": is_fallback,
+        "feedback": None
+    })
+    st.session_state.history_pairs.append({"q": prompt, "a": full_response})
