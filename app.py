@@ -276,7 +276,7 @@ Answer as a senior surgical consultant:
 
     # Stream from Groq
     stream = groq_client.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=messages,
         temperature=0.2,
         max_tokens=1500,
