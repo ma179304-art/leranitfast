@@ -387,11 +387,12 @@ with st.sidebar:
 
     st.markdown("---")
     
+    # FIX: Replaced st.experimental_rerun() with stable st.rerun()
     if st.button("🗑️ Clear Conversation", use_container_width=True):
         st.session_state.messages      = []
         st.session_state.history_pairs = []
         st.session_state.input_query   = ""
-        st.experimental_rerun()
+        st.rerun()
         
     st.markdown(
         f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
@@ -435,9 +436,10 @@ def render_welcome():
     cols = st.columns(2)
     for idx, (icon, text) in enumerate(SAMPLES):
         with cols[idx % 2]:
+            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button(f"{icon} {text}", key=f"chip_{idx}", use_container_width=True):
                 st.session_state.input_query = text
-                st.experimental_rerun()
+                st.rerun()
 
 
 # ── RENDER MESSAGES ──────────────────────────────────────────
@@ -470,7 +472,6 @@ else:
 
 
 # ── INPUT W/ EXPLICIT PLACEHOLDER MICROCOPY ──────────────────
-# UX improvement: User-friendly microcopy as guidance placeholder text
 placeholder_text = "Ask a clinical question, e.g., 'Management of acute appendicitis'..."
 prompt = st.chat_input(placeholder=placeholder_text)
 
@@ -490,7 +491,7 @@ if prompt:
     # Intent Confidence and Validation Logic (Checks for vague / short ambiguous words)
     stripped_prompt = prompt.strip().lower()
     if len(stripped_prompt.split()) <= 1 or stripped_prompt in ["appendicitis", "stomach", "cushing", "analgesia"]:
-        # Ambiguity Clarification Block -> Targeted Recovery rather than "I don't understand"
+        # Ambiguity Clarification Block
         clarification_text = f"""
         ### 🔍 Clarification Needed
         I detected your query regarding **"{prompt}"**, but it is broad. To provide an accurate, textbook-grounded answer, could you please specify your clinical objective?
@@ -506,17 +507,20 @@ if prompt:
         st.markdown('<div class="suggestion-container">', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
+            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("📋 Diagnostic Criteria", key="clarify_diag", use_container_width=True):
                 st.session_state.input_query = f"Diagnostic criteria and workup for {prompt}"
-                st.experimental_rerun()
+                st.rerun()
         with c2:
+            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("🔪 Surgical Management", key="clarify_surg", use_container_width=True):
                 st.session_state.input_query = f"Management steps and treatment for acute {prompt}"
-                st.experimental_rerun()
+                st.rerun()
         with c3:
+            # FIX: Replaced st.experimental_rerun() with stable st.rerun()
             if st.button("🧬 Pathophysiology", key="clarify_path", use_container_width=True):
                 st.session_state.input_query = f"Pathophysiology and anatomy of {prompt}"
-                st.experimental_rerun()
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     else:
@@ -563,4 +567,5 @@ if prompt:
             render_message("assistant", error_msg)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
             
-        st.experimental_rerun()
+        # FIX: Replaced st.experimental_rerun() with stable st.rerun()
+        st.rerun()
