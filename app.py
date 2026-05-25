@@ -232,40 +232,46 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"]{
     border-radius:6px;
 }
 
-/* BEST IMPROVED INPUT BAR */
+/* ── CHAT INPUT BAR ────────────────────────────────────────── */
 [data-testid="stChatInput"]{
-    background:linear-gradient(180deg,#0f172a,#111827)!important;
-    border:2px solid #223354!important;
-    border-radius:24px!important;
-    padding:8px!important;
-    transition:all .25s ease!important;
+    background: linear-gradient(180deg,#ffffff,#f1f5f9) !important;
+    border: 2px solid #cbd5e1 !important;
+    border-radius: 24px !important;
+    padding: 8px !important;
+    transition: all .25s ease !important;
     box-shadow:
-        0 10px 35px rgba(0,0,0,.35),
-        inset 0 1px 0 rgba(255,255,255,.03);
-    position:sticky;
-    bottom:12px;
+        0 10px 35px rgba(0,0,0,.25),
+        inset 0 1px 0 rgba(255,255,255,.9);
+    position: sticky;
+    bottom: 12px;
 }
 
 [data-testid="stChatInput"]:focus-within{
-    border-color:var(--accent)!important;
+    border-color: var(--accent) !important;
     box-shadow:
-        0 0 0 4px rgba(79,158,255,.12),
-        0 12px 40px rgba(79,158,255,.18)!important;
-    transform:translateY(-1px);
+        0 0 0 4px rgba(79,158,255,.14),
+        0 12px 40px rgba(79,158,255,.2) !important;
+    transform: translateY(-1px);
 }
 
-[data-testid="stChatInput"] textarea{
-    color:var(--txt)!important;
-    font-size:1.02rem!important;
-    font-family:'Inter',sans-serif!important;
-    background:transparent!important;
-    line-height:1.7!important;
-    padding-top:8px!important;
+/* ── INPUT TEXT — BLACK ─────────────────────────────────────── */
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"] div[contenteditable]{
+    color: #000000 !important;
+    caret-color: #000000 !important;
+    font-size: 1.02rem !important;
+    font-family: 'Inter', sans-serif !important;
+    background: transparent !important;
+    line-height: 1.7 !important;
+    padding-top: 8px !important;
+    -webkit-text-fill-color: #000000 !important;
 }
 
 [data-testid="stChatInput"] textarea::placeholder{
-    color:#7b8aa8!important;
-    font-weight:500;
+    color: #64748b !important;
+    font-weight: 500;
+    -webkit-text-fill-color: #64748b !important;
 }
 
 /* SEND BUTTON */
@@ -358,7 +364,7 @@ def load_resources():
 embed_model, qdrant_client, groq_client = load_resources()
 
 # ─────────────────────────────────────────────────────────────
-# BETTER AI RESPONSE ENGINE
+# AI RESPONSE ENGINE
 # ─────────────────────────────────────────────────────────────
 def clean_response(text):
     text = re.sub(r"(?i)^sources:.*$", "", text, flags=re.MULTILINE)
@@ -377,7 +383,6 @@ def ask_ai(question, history):
     )
 
     context_parts = []
-
     for hit in hits:
         txt = hit.payload.get("text", "")
         context_parts.append(txt)
@@ -386,75 +391,76 @@ def ask_ai(question, history):
 
     messages = [
         {
-            "role":"system",
-            "content":"""
-You are an elite senior physician and medical educator.
+            "role": "system",
+            "content": """
+You are a world-class senior consultant physician and surgical educator with 25+ years of clinical experience.
 
-Your responses must feel:
-- intelligent
-- clinically practical
-- concise but high value
-- confident
-- deeply explanatory
+Your responses must be:
+- Thorough, detailed, and clinically comprehensive
+- Structured with beautiful markdown formatting
+- Rich with decision-making logic, not just facts
+- Written like a brilliant consultant teaching a registrar at the bedside
+- Confident, direct, and deeply practical
 
-IMPORTANT RULES:
-- NEVER mention sources
-- NEVER say "based on the textbook"
-- NEVER say "according to context"
-- NEVER mention retrieval
-- Speak naturally like a brilliant consultant
-- Give direct answers first
-- Then explain reasoning
-- Use markdown beautifully
-- Make answers feel premium and human
+STRICT RULES:
+- NEVER mention sources, textbooks, or retrieval context
+- NEVER say "based on the context" or "according to the reference"
+- Speak naturally as if this is your own expert knowledge
+- Always give a direct answer FIRST, then expand
+- Use headers, bullet points, tables, and bold text generously for readability
+- Answers must be LONG and DETAILED — never truncate or summarise unnecessarily
+- Include real-world clinical nuance, edge cases, and common pitfalls
 
-If surgical/clinical:
-- mention diagnosis
-- investigations
-- treatment
-- complications
-- pearls
+FOR EVERY CLINICAL QUESTION ALWAYS COVER:
 
-Avoid robotic wording.
+1. **Direct Answer** — one-sentence verdict up front
+2. **Pathophysiology** — mechanism behind the condition (where relevant)
+3. **Clinical Features** — history, examination findings, red flags
+4. **Investigations** — bedside, lab, imaging — with interpretation tips
+5. **Diagnosis / Differential Diagnosis** — ranked, with distinguishing features
+6. **Management** — step-by-step: immediate, definitive, surgical if applicable
+7. **Complications** — early, late, life-threatening
+8. **Special Populations** — pregnancy, elderly, immunocompromised (if relevant)
+9. **Clinical Pearls** — 2–3 high-yield insights a senior would tell a junior
+10. **Follow-up & Prognosis** — what to monitor, expected outcomes
+
+Use tables where comparisons are needed.
+Use numbered steps for procedures and management protocols.
+Use ⚠️ for warnings, ✅ for key actions, 🔑 for pearls, 📊 for scoring systems.
 """
         }
     ]
 
-    for h in history[-5:]:
-        messages.append({"role":"user","content":h["q"]})
-        messages.append({"role":"assistant","content":h["a"]})
+    for h in history[-6:]:
+        messages.append({"role": "user",    "content": h["q"]})
+        messages.append({"role": "assistant","content": h["a"]})
 
     messages.append({
-        "role":"user",
-        "content":f"""
+        "role": "user",
+        "content": f"""
 QUESTION:
 {question}
 
-MEDICAL REFERENCE:
+MEDICAL REFERENCE CONTEXT:
 {context}
 
-Generate a premium consultant-level answer.
-
-Structure:
-# Direct Answer
-# Full Explanation
-# Step by Step Management
-# Clinical Pearl
+Generate a comprehensive, detailed, consultant-level answer using the full structure above.
+Do not skip any section. Be exhaustive. This is for a senior surgical trainee preparing for exams and clinical practice.
 """
     })
 
     stream = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=messages,
-        temperature=0.3,
-        max_tokens=2200,
+        temperature=0.25,
+        max_tokens=3500,       # ← increased from 2200 for longer answers
         stream=True
     )
 
     return stream
 
 # ─────────────────────────────────────────────────────────────
-# SESSION
+# SESSION STATE
 # ─────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -515,7 +521,6 @@ st.markdown("""
         <div class="subtext">
             Consultant-level medical reasoning powered by your AI textbook system
         </div>
-
         <div class="online">
             <div class="pulse"></div>
             Advanced Clinical Intelligence Active
@@ -525,39 +530,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# WELCOME
+# WELCOME SCREEN
 # ─────────────────────────────────────────────────────────────
 if not st.session_state.messages:
-
     st.markdown("""
     <div class="welcome">
         <h2>Ask any clinical question</h2>
-
         <p>
-        Get intelligent consultant-style answers with deep explanations,
-        diagnostic reasoning, management plans, and clinical pearls.
+        Get exhaustive consultant-style answers — complete with pathophysiology,
+        investigations, step-by-step management, complications, and clinical pearls.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# RENDER CHAT
+# RENDER CHAT MESSAGES
 # ─────────────────────────────────────────────────────────────
 def render_message(role, content):
 
     if role == "user":
-
         st.markdown(f"""
         <div class="msg user">
             <div class="avatar">🧑‍⚕️</div>
-            <div class="bubble">
-                {content}
-            </div>
+            <div class="bubble">{content}</div>
         </div>
         """, unsafe_allow_html=True)
 
     else:
-
         st.markdown("""
         <div class="msg assistant">
             <div class="avatar">🤖</div>
@@ -571,12 +570,12 @@ def render_message(role, content):
         </div>
         """, unsafe_allow_html=True)
 
-# Render old messages
+# Render existing messages
 for msg in st.session_state.messages:
     render_message(msg["role"], msg["content"])
 
 # ─────────────────────────────────────────────────────────────
-# IMPROVED ASK BAR
+# CHAT INPUT
 # ─────────────────────────────────────────────────────────────
 prompt = st.chat_input(
     "Ask anything clinical... diagnosis, surgery, management, interpretation..."
@@ -587,19 +586,14 @@ if st.session_state.prefill:
     st.session_state.prefill = None
 
 # ─────────────────────────────────────────────────────────────
-# HANDLE QUESTION
+# HANDLE NEW QUESTION
 # ─────────────────────────────────────────────────────────────
 if prompt:
 
     render_message("user", prompt)
-
-    st.session_state.messages.append({
-        "role":"user",
-        "content":prompt
-    })
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
     thinking = st.empty()
-
     thinking.markdown("""
     <div class="thinking">
         <div style="display:flex;gap:5px">
@@ -607,41 +601,25 @@ if prompt:
             <div class="dot"></div>
             <div class="dot"></div>
         </div>
-
-        <div>
-            Analyzing clinical data and generating expert response...
-        </div>
+        <div>Analyzing clinical data and generating expert response...</div>
     </div>
     """, unsafe_allow_html=True)
 
     stream = ask_ai(prompt, st.session_state.history)
-
     thinking.empty()
 
     response_placeholder = st.empty()
-
     full_response = ""
 
     for chunk in stream:
-
         token = chunk.choices[0].delta.content or ""
-
         full_response += token
-
         response_placeholder.markdown(full_response + "▌")
 
     response_placeholder.empty()
-
     full_response = clean_response(full_response)
 
     render_message("assistant", full_response)
 
-    st.session_state.messages.append({
-        "role":"assistant",
-        "content":full_response
-    })
-
-    st.session_state.history.append({
-        "q":prompt,
-        "a":full_response
-    })
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
+    st.session_state.history.append({"q": prompt, "a": full_response})
