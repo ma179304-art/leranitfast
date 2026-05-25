@@ -1,691 +1,647 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
-from groq import Groq, AuthenticationError
+from groq import Groq
+import re
 import time
 
-# ── PAGE CONFIG ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# PAGE CONFIG
+# ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Medical AI Assistant",
-    page_icon="🏥",
+    page_icon="🩺",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ── CSS ──────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# ADVANCED CSS
+# ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-:root {
-    --bg:         #0a0e1a;
-    --surface:    #111827;
-    --surface2:   #1a2236;
-    --border:     #1f2d45;
-    --border2:    #2d3f5c;
-    --accent:     #4f9eff;
-    --accent-glow:#4f9eff30;
-    --green:      #34d399;
-    --green-dim:  #34d39920;
-    --yellow:     #fbbf24;
-    --red:        #f87171;
-    --text:       #e2e8f0;
-    --text2:      #94a3b8;
-    --text3:      #64748b;
-    --user-bg:    #151f30;
-    --ai-bg:      #0d1420;
-    --fallback-bg:#1a1e2b;
+:root{
+    --bg:#060816;
+    --panel:#0f172a;
+    --panel2:#111c34;
+    --border:#1e2d4d;
+    --border2:#2d4371;
+    --accent:#4f9eff;
+    --accent2:#7c5cff;
+    --accentGlow:rgba(79,158,255,.18);
+    --txt:#edf2ff;
+    --muted:#94a3b8;
+    --muted2:#64748b;
+    --green:#22c55e;
+    --user:#16233c;
+    --assistant:#0d1527;
 }
 
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-    background: var(--bg) !important;
-    color: var(--text) !important;
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"]{
+    background: radial-gradient(circle at top, #0d1630 0%, #060816 50%);
+    color: var(--txt);
     font-family: 'Inter', sans-serif;
 }
 
-/* ── SIDEBAR ── */
-[data-testid="stSidebar"] {
-    background: var(--surface) !important;
-    border-right: 1px solid var(--border) !important;
-}
-[data-testid="stSidebar"] * { color: var(--text) !important; }
-[data-testid="stSidebarCollapseButton"] { color: var(--text2) !important; }
-
-/* ── HEADER ── */
-.app-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 28px 0 20px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 28px;
-}
-.app-header .logo {
-    width: 52px; height: 52px;
-    background: linear-gradient(135deg, #1a3a6e, #0d2040);
-    border: 1px solid var(--border2);
-    border-radius: 14px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.6rem;
-    box-shadow: 0 0 20px rgba(79,158,255,0.15);
-    flex-shrink: 0;
-}
-.app-header h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: var(--text);
-    margin: 0 0 4px;
-    letter-spacing: -0.5px;
-}
-.app-header .sub {
-    font-size: 0.85rem;
-    color: var(--text2);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.badge-online {
-    display: inline-flex; align-items: center; gap: 5px;
-    background: var(--green-dim);
-    border: 1px solid #34d39940;
-    color: var(--green);
-    border-radius: 20px;
-    padding: 2px 10px;
-    font-size: 0.72rem;
-    font-weight: 500;
-}
-.dot-pulse {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--green);
-    animation: pulse 2s ease-in-out infinite;
-    display: inline-block;
-}
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-/* ── WELCOME SCREEN ── */
-.welcome-wrap {
-    text-align: center;
-    padding: 60px 20px 40px;
-    max-width: 600px;
-    margin: 0 auto;
-}
-.welcome-icon { font-size: 3.5rem; margin-bottom: 16px; }
-.welcome-wrap h2 {
-    font-size: 1.4rem; font-weight: 600;
-    color: var(--text); margin-bottom: 8px;
-}
-.welcome-wrap p {
-    font-size: 1rem; color: var(--text2);
-    line-height: 1.6; margin-bottom: 32px;
-}
-.welcome-wrap .disclaimer {
-    font-size: 0.75rem; color: var(--text3);
-    margin-top: 20px;
-    border-top: 1px solid var(--border);
-    padding-top: 12px;
-}
-.sample-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    text-align: left;
-}
-.sample-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 0.88rem;
-    color: var(--text2);
-    line-height: 1.4;
-}
-.sample-card:hover {
-    border-color: var(--accent);
-    color: var(--text);
-    background: var(--surface2);
-}
-.sample-card .icon { font-size: 1.1rem; margin-bottom: 6px; display: block; }
-
-/* ── CHAT BUBBLES ── */
-.msg-row { display: flex; margin: 10px 0; align-items: flex-start; gap: 12px; }
-.msg-row.user  { flex-direction: row-reverse; }
-
-.avatar {
-    width: 36px; height: 36px; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1rem; flex-shrink: 0; margin-top: 2px;
-}
-.avatar.user-av { background: linear-gradient(135deg,#1e3a5f,#0d2040); border: 1px solid var(--border2); }
-.avatar.ai-av   { background: linear-gradient(135deg,#1a3a6e,#0d2040); border: 1px solid var(--border2);
-                   box-shadow: 0 0 12px var(--accent-glow); }
-
-.bubble {
-    max-width: calc(100% - 56px);
-    border-radius: 16px;
-    padding: 14px 18px;
-    font-size: 1.02rem;
-    line-height: 1.75;
-}
-.bubble.user {
-    background: var(--user-bg);
-    border: 1px solid var(--border2);
-    border-top-right-radius: 4px;
-    color: var(--text);
-    font-weight: 400;
-}
-.bubble.ai {
-    background: var(--ai-bg);
-    border: 1px solid var(--border);
-    border-top-left-radius: 4px;
-    border-left: 3px solid var(--accent);
-    color: var(--text);
-}
-.bubble.ai.fallback {
-    border-left-color: var(--yellow);
-    background: var(--fallback-bg);
+/* Hide Streamlit */
+#MainMenu, footer, header{
+    visibility:hidden;
 }
 
-/* Markdown inside ai bubble */
-.bubble.ai h1,.bubble.ai h2,.bubble.ai h3 {
-    color: var(--accent); font-weight: 600; margin: 16px 0 8px;
-    font-size: 1.05rem;
-}
-.bubble.ai strong { color: var(--text); font-weight: 600; }
-.bubble.ai ul, .bubble.ai ol { padding-left: 20px; margin: 8px 0; }
-.bubble.ai li { margin: 4px 0; }
-.bubble.ai code {
-    background: var(--surface2); border: 1px solid var(--border2);
-    border-radius: 4px; padding: 1px 6px;
-    font-family: 'JetBrains Mono', monospace; font-size: 0.88rem;
-}
-.bubble.ai blockquote {
-    border-left: 3px solid var(--accent); margin: 10px 0;
-    padding: 6px 12px; background: var(--surface); border-radius: 0 8px 8px 0;
+.block-container{
+    padding-top:1rem!important;
+    max-width:950px;
 }
 
-/* Sources */
-.sources-bar {
-    margin-top: 12px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
-    display: flex; flex-wrap: wrap; gap: 6px;
-    align-items: center;
-}
-.src-label { font-size: 0.72rem; color: var(--text3); font-weight: 500; }
-.src-tag {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: rgba(79,158,255,0.08);
-    border: 1px solid rgba(79,158,255,0.25);
-    color: var(--accent);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    border-radius: 20px;
+/* HEADER */
+.main-header{
+    display:flex;
+    align-items:center;
+    gap:18px;
+    padding:18px 0 24px 0;
+    margin-bottom:20px;
+    border-bottom:1px solid var(--border);
 }
 
-/* ── CHAT INPUT (question bar) ── */
-[data-testid="stChatInput"] {
-    background: #1e2736 !important;          /* custom darker background */
-    border: 1px solid #2d3f5c !important;   /* subtle border */
-    border-radius: 14px !important;
-}
-[data-testid="stChatInput"] textarea {
-    background: transparent !important;
-    color: var(--text) !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 1rem !important;
-}
-[data-testid="stChatInput"] textarea::placeholder {
-    color: #7b8ca3 !important;
-    opacity: 1 !important;
-}
-[data-testid="stChatInput"]:focus-within {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 3px var(--accent-glow) !important;
+.logo{
+    width:60px;
+    height:60px;
+    border-radius:18px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:linear-gradient(135deg,#4f9eff,#7c5cff);
+    font-size:1.8rem;
+    box-shadow:0 0 30px rgba(79,158,255,.35);
 }
 
-/* ── SIDEBAR (repeated) ── */
-.sidebar-section { margin-bottom: 20px; }
-.sidebar-title {
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 1px;
-    color: var(--text3); text-transform: uppercase; margin-bottom: 10px;
-}
-.sb-btn {
-    display: block; width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 9px 12px;
-    color: var(--text2) !important;
-    font-size: 0.85rem;
-    cursor: pointer;
-    text-align: left;
-    margin-bottom: 6px;
-    transition: all 0.15s;
-    line-height: 1.4;
-}
-.sb-btn:hover { border-color: var(--accent); color: var(--text) !important; }
-
-/* Buttons */
-.stButton button {
-    background: var(--surface2) !important;
-    color: var(--text2) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 0.85rem !important;
-    transition: all 0.2s;
-    padding: 8px 14px !important;
-}
-.stButton button:hover {
-    border-color: var(--accent) !important;
-    color: var(--text) !important;
+.main-header h1{
+    margin:0;
+    font-size:2rem;
+    font-weight:800;
+    letter-spacing:-1px;
 }
 
-/* Feedback and suggestion buttons */
-.feedback-btns {
-    margin-top: 6px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-.feedback-btns .stButton button {
-    padding: 4px 10px !important;
-    font-size: 0.8rem !important;
-}
-.suggestion-btns {
-    margin-top: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-.suggestion-btns .stButton button {
-    font-size: 0.78rem !important;
-    padding: 4px 12px !important;
-    background: var(--surface) !important;
-    border-color: var(--border2) !important;
-    color: var(--accent) !important;
+.subtext{
+    color:var(--muted);
+    margin-top:4px;
+    font-size:.95rem;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar       { width: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
-
-/* Hide Streamlit chrome */
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding-top: 0.5rem !important; max-width: 860px; }
-
-/* Spinner / thinking dots */
-.thinking {
-    display: flex; align-items: center; gap: 10px;
-    color: var(--text2); font-size: 0.9rem; padding: 14px 18px;
+.online{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    background:rgba(34,197,94,.12);
+    border:1px solid rgba(34,197,94,.25);
+    color:#86efac;
+    padding:4px 10px;
+    border-radius:50px;
+    margin-top:8px;
+    font-size:.78rem;
 }
-.thinking-dots span {
-    display: inline-block; width: 6px; height: 6px;
-    border-radius: 50%; background: var(--accent);
-    animation: bounce 1.2s ease-in-out infinite;
-    margin: 0 2px;
+
+.pulse{
+    width:7px;
+    height:7px;
+    border-radius:50%;
+    background:#22c55e;
+    animation:pulse 1.5s infinite;
 }
-.thinking-dots span:nth-child(2) { animation-delay: .2s; }
-.thinking-dots span:nth-child(3) { animation-delay: .4s; }
-@keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-6px)} }
+
+@keyframes pulse{
+    0%{opacity:1}
+    50%{opacity:.3}
+    100%{opacity:1}
+}
+
+/* WELCOME */
+.welcome{
+    text-align:center;
+    padding:80px 10px 50px;
+}
+
+.welcome h2{
+    font-size:2rem;
+    margin-bottom:10px;
+}
+
+.welcome p{
+    color:var(--muted);
+    max-width:650px;
+    margin:auto;
+    line-height:1.8;
+    font-size:1.05rem;
+}
+
+/* SAMPLE CARDS */
+.samples{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:14px;
+    margin-top:35px;
+}
+
+.sample{
+    background:rgba(17,28,52,.7);
+    border:1px solid var(--border);
+    padding:18px;
+    border-radius:18px;
+    transition:.2s;
+    cursor:pointer;
+}
+
+.sample:hover{
+    transform:translateY(-3px);
+    border-color:var(--accent);
+    box-shadow:0 0 25px rgba(79,158,255,.12);
+}
+
+/* CHAT */
+.msg{
+    display:flex;
+    gap:14px;
+    margin:22px 0;
+    align-items:flex-start;
+}
+
+.msg.user{
+    flex-direction:row-reverse;
+}
+
+.avatar{
+    width:42px;
+    height:42px;
+    border-radius:14px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    flex-shrink:0;
+    font-size:1rem;
+}
+
+.user .avatar{
+    background:linear-gradient(135deg,#23416f,#16233c);
+    border:1px solid var(--border2);
+}
+
+.assistant .avatar{
+    background:linear-gradient(135deg,#4f9eff,#7c5cff);
+    box-shadow:0 0 20px rgba(79,158,255,.25);
+}
+
+.bubble{
+    max-width:82%;
+    padding:18px 22px;
+    border-radius:22px;
+    line-height:1.8;
+    font-size:1rem;
+}
+
+.user .bubble{
+    background:var(--user);
+    border:1px solid var(--border2);
+    border-top-right-radius:8px;
+}
+
+.assistant .bubble{
+    background:var(--assistant);
+    border:1px solid var(--border);
+    border-top-left-radius:8px;
+    border-left:3px solid var(--accent);
+}
+
+/* MARKDOWN */
+.assistant .bubble h1,
+.assistant .bubble h2,
+.assistant .bubble h3{
+    color:#8cbcff;
+    margin-top:18px;
+    margin-bottom:8px;
+}
+
+.assistant .bubble strong{
+    color:white;
+}
+
+.assistant .bubble code{
+    background:#17233f;
+    padding:2px 8px;
+    border-radius:6px;
+}
+
+/* BEST IMPROVED INPUT BAR */
+[data-testid="stChatInput"]{
+    background:linear-gradient(180deg,#0f172a,#111827)!important;
+    border:2px solid #223354!important;
+    border-radius:24px!important;
+    padding:8px!important;
+    transition:all .25s ease!important;
+    box-shadow:
+        0 10px 35px rgba(0,0,0,.35),
+        inset 0 1px 0 rgba(255,255,255,.03);
+    position:sticky;
+    bottom:12px;
+}
+
+[data-testid="stChatInput"]:focus-within{
+    border-color:var(--accent)!important;
+    box-shadow:
+        0 0 0 4px rgba(79,158,255,.12),
+        0 12px 40px rgba(79,158,255,.18)!important;
+    transform:translateY(-1px);
+}
+
+[data-testid="stChatInput"] textarea{
+    color:var(--txt)!important;
+    font-size:1.02rem!important;
+    font-family:'Inter',sans-serif!important;
+    background:transparent!important;
+    line-height:1.7!important;
+    padding-top:8px!important;
+}
+
+[data-testid="stChatInput"] textarea::placeholder{
+    color:#7b8aa8!important;
+    font-weight:500;
+}
+
+/* SEND BUTTON */
+[data-testid="stChatInputSubmitButton"]{
+    background:linear-gradient(135deg,#4f9eff,#7c5cff)!important;
+    border-radius:14px!important;
+    border:none!important;
+    transition:.2s!important;
+}
+
+[data-testid="stChatInputSubmitButton"]:hover{
+    transform:scale(1.05)!important;
+    box-shadow:0 0 18px rgba(79,158,255,.35)!important;
+}
+
+/* THINKING */
+.thinking{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    color:var(--muted);
+    padding:18px;
+}
+
+.dot{
+    width:8px;
+    height:8px;
+    border-radius:50%;
+    background:var(--accent);
+    animation:bounce 1.2s infinite;
+}
+
+.dot:nth-child(2){animation-delay:.2s}
+.dot:nth-child(3){animation-delay:.4s}
+
+@keyframes bounce{
+    0%,80%,100%{transform:translateY(0)}
+    40%{transform:translateY(-8px)}
+}
+
+/* SIDEBAR */
+[data-testid="stSidebar"]{
+    background:#0d1425!important;
+    border-right:1px solid var(--border)!important;
+}
+
+.stButton button{
+    background:#111c34!important;
+    color:#d7e5ff!important;
+    border:1px solid var(--border)!important;
+    border-radius:12px!important;
+    transition:.2s!important;
+}
+
+.stButton button:hover{
+    border-color:var(--accent)!important;
+    transform:translateY(-1px);
+}
+
+/* SCROLL */
+::-webkit-scrollbar{
+    width:6px;
+}
+
+::-webkit-scrollbar-thumb{
+    background:#334155;
+    border-radius:20px;
+}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ── RESOURCES (with error handling) ──────────────────────────
-@st.cache_resource(show_spinner="Loading AI models...")
+# ─────────────────────────────────────────────────────────────
+# LOAD RESOURCES
+# ─────────────────────────────────────────────────────────────
+@st.cache_resource(show_spinner="Loading medical AI...")
 def load_resources():
-    required_secrets = ["QDRANT_URL", "QDRANT_API_KEY", "GROQ_API_KEY"]
-    for sec in required_secrets:
-        if sec not in st.secrets or not st.secrets[sec]:
-            raise ValueError(f"Missing secret: {sec}. Please configure it in Streamlit secrets.")
+    embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    embed = SentenceTransformer("all-MiniLM-L6-v2")
-    qdrant = QdrantClient(url=st.secrets["QDRANT_URL"], api_key=st.secrets["QDRANT_API_KEY"])
-    try:
-        # Quick connection test
-        Groq(api_key=st.secrets["GROQ_API_KEY"]).models.list()
-    except AuthenticationError:
-        raise AuthenticationError("Invalid Groq API key. Please check your GROQ_API_KEY secret.")
-    except Exception as e:
-        raise ConnectionError(f"Could not connect to Groq: {e}")
+    qdrant = QdrantClient(
+        url=st.secrets["QDRANT_URL"],
+        api_key=st.secrets["QDRANT_API_KEY"]
+    )
 
-    groq = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    return embed, qdrant, groq
+    groq_client = Groq(
+        api_key=st.secrets["GROQ_API_KEY"]
+    )
 
-try:
-    embed_model, qdrant_client, groq_client = load_resources()
-except Exception as e:
-    st.error(f"❌ **Configuration error:** {e}")
-    st.stop()
+    return embed_model, qdrant, groq_client
 
-@st.cache_data(show_spinner=False, ttl=300)
-def get_book_list():
-    try:
-        results = qdrant_client.scroll(
-            collection_name="medical_books", limit=1000, with_payload=["source"]
-        )
-        books = set()
-        for pt in results[0]:
-            if pt.payload and "source" in pt.payload:
-                books.add(pt.payload["source"].replace(".pdf", ""))
-        return sorted(books)
-    except:
-        return []
+embed_model, qdrant_client, groq_client = load_resources()
 
+# ─────────────────────────────────────────────────────────────
+# BETTER AI RESPONSE ENGINE
+# ─────────────────────────────────────────────────────────────
+def clean_response(text):
+    text = re.sub(r"(?i)^sources:.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
-# ── ASK ──────────────────────────────────────────────────────
-def ask(question, history):
-    """Return (stream_generator, sources_set, is_fallback)"""
-    q_vec = embed_model.encode([question]).tolist()[0]
-    try:
-        hits = qdrant_client.search(
-            collection_name="medical_books",
-            query_vector=q_vec,
-            limit=12,
-            with_payload=True
-        )
-    except Exception as e:
-        error_msg = f"⚠️ Could not search the textbooks: {e}"
-        def error_stream():
-            yield error_msg
-        return error_stream(), set(), True
+def ask_ai(question, history):
 
-    context_parts, sources = [], set()
+    q_vector = embed_model.encode([question]).tolist()[0]
+
+    hits = qdrant_client.search(
+        collection_name="medical_books",
+        query_vector=q_vector,
+        limit=14,
+        with_payload=True
+    )
+
+    context_parts = []
+
     for hit in hits:
-        src = hit.payload.get("source", "Unknown")
-        context_parts.append(f"[{src}]\n{hit.payload['text']}")
-        sources.add(src.replace(".pdf", ""))
+        txt = hit.payload.get("text", "")
+        context_parts.append(txt)
 
-    if not sources:
-        fallback_text = (
-            "I couldn't find any relevant information in the textbooks for your query. "
-            "This might be because the topic is too specific or not covered in the available books.\n\n"
-            "**Suggestions to rephrase:**\n"
-            "- Use general medical terms\n"
-            "- Ask about symptoms, diagnosis, or treatment\n"
-            "- Try one of the sample questions from the sidebar\n\n"
-            "Here are some follow‑up ideas you can click:"
-        )
-        def fallback_stream():
-            yield fallback_text
-        return fallback_stream(), set(), True
+    context = "\n\n".join(context_parts[:10])
 
-    context = "\n\n---\n\n".join(context_parts)
+    messages = [
+        {
+            "role":"system",
+            "content":"""
+You are an elite senior physician and medical educator.
 
-    messages = [{
-        "role": "system",
-        "content": f"""You are a senior medical consultant and clinical educator with mastery of multiple medical and surgical textbooks. You answer like a brilliant attending physician teaching a resident — precise, structured, and clinically grounded.
+Your responses must feel:
+- intelligent
+- clinically practical
+- concise but high value
+- confident
+- deeply explanatory
 
-Rules:
-- Base your answer strictly on the provided textbook context
-- Synthesize information from multiple sources when available
-- Use correct medical terminology throughout
-- Be confident and direct — no unnecessary hedging
-- Format answers with clear headers and bullet points for readability
-- Always end with the single most important clinical takeaway
+IMPORTANT RULES:
+- NEVER mention sources
+- NEVER say "based on the textbook"
+- NEVER say "according to context"
+- NEVER mention retrieval
+- Speak naturally like a brilliant consultant
+- Give direct answers first
+- Then explain reasoning
+- Use markdown beautifully
+- Make answers feel premium and human
 
-Books in knowledge base: {', '.join(sources) if sources else 'Medical textbook library'}"""
-    }]
+If surgical/clinical:
+- mention diagnosis
+- investigations
+- treatment
+- complications
+- pearls
 
-    for h in history[-6:]:
-        messages.append({"role": "user",      "content": h["q"]})
-        messages.append({"role": "assistant", "content": h["a"]})
+Avoid robotic wording.
+"""
+        }
+    ]
+
+    for h in history[-5:]:
+        messages.append({"role":"user","content":h["q"]})
+        messages.append({"role":"assistant","content":h["a"]})
 
     messages.append({
-        "role": "user",
-        "content": f"""TEXTBOOK CONTEXT:
+        "role":"user",
+        "content":f"""
+QUESTION:
+{question}
+
+MEDICAL REFERENCE:
 {context}
 
-CLINICAL QUESTION: {question}
+Generate a premium consultant-level answer.
 
-Answer as a senior medical consultant. Use this structure:
-## Core Answer
-[Direct 2-3 sentence answer]
-
-## Explanation
-[Detailed clinical explanation]
-
-## Key Points
-[Bullet points of what matters most]
-
-## ⚡ Clinical Pearl
-[Single most important takeaway]
-
-Sources: {', '.join(sources)}"""
+Structure:
+# Direct Answer
+# Full Explanation
+# Step by Step Management
+# Clinical Pearl
+"""
     })
 
-    try:
-        stream = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            temperature=0.2,
-            max_tokens=2000,
-            stream=True
-        )
-        return stream, sources, False
-    except AuthenticationError:
-        error_msg = "❌ **API key error:** The Groq API key is invalid. Please check your `GROQ_API_KEY` secret."
-        def error_stream():
-            yield error_msg
-        return error_stream(), set(), True
-    except Exception as e:
-        error_msg = f"⚠️ An error occurred while generating the answer: {str(e)}"
-        def error_stream():
-            yield error_msg
-        return error_stream(), set(), True
+    stream = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        temperature=0.3,
+        max_tokens=2200,
+        stream=True
+    )
 
+    return stream
 
-# ── SESSION STATE ────────────────────────────────────────────
-if "messages"      not in st.session_state: st.session_state.messages      = []
-if "history_pairs" not in st.session_state: st.session_state.history_pairs = []
-if "prefill"       not in st.session_state: st.session_state.prefill        = None
+# ─────────────────────────────────────────────────────────────
+# SESSION
+# ─────────────────────────────────────────────────────────────
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-# ── SIDEBAR ──────────────────────────────────────────────────
-SAMPLES = [
-    ("🔪", "Management of acute appendicitis"),
-    ("🩸", "Blood supply of the stomach"),
-    ("🧬", "Pathophysiology of Cushing syndrome"),
-    ("💊", "Post-op analgesia principles"),
-    ("🫀", "Cardiac risk assessment before surgery"),
-    ("🦠", "Surgical site infection prevention"),
-    ("🧠", "Glasgow Coma Scale interpretation"),
-    ("📋", "Pre-operative workup for elective surgery"),
+if "prefill" not in st.session_state:
+    st.session_state.prefill = None
+
+# ─────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────
+samples = [
+    "Management of acute appendicitis",
+    "Interpretation of elevated INR",
+    "Complications of portal hypertension",
+    "Neck abscess drainage steps",
+    "Pre-operative cardiac risk assessment",
+    "Acute pancreatitis severity scoring",
+    "Appendicitis with normal WBC",
+    "Post-operative fever causes"
 ]
 
 with st.sidebar:
-    books = get_book_list()
 
-    st.markdown(f"""
-    <div style="padding:16px 0 8px">
-        <div style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:4px">🏥 Medical AI</div>
-        <span class="badge-online"><span class="dot-pulse"></span>Online · {len(books)} books</span>
+    st.markdown("## 🩺 Medical AI")
+
+    st.markdown("""
+    <div class="online">
+        <div class="pulse"></div>
+        AI Online
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown('<div class="sidebar-title">💡 Sample Questions</div>', unsafe_allow_html=True)
-    for icon, sample in SAMPLES:
-        if st.button(f"{icon}  {sample}", key=sample, use_container_width=True):
-            st.session_state.prefill = sample
+    st.markdown("### Sample Questions")
+
+    for s in samples:
+        if st.button(s, use_container_width=True):
+            st.session_state.prefill = s
             st.rerun()
 
     st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Clear", use_container_width=True):
-            st.session_state.messages      = []
-            st.session_state.history_pairs = []
-            st.rerun()
-    with col2:
-        st.markdown(
-            f'<div style="font-size:0.75rem;color:var(--text3);padding-top:8px;text-align:center">'
-            f'{len(st.session_state.messages)//2} questions</div>',
-            unsafe_allow_html=True
-        )
 
-    st.markdown(
-        '<div style="color:var(--text3);font-size:0.7rem;margin-top:20px;line-height:1.6">'
-        'For educational use only.<br>Not a substitute for clinical judgment.<br>Do not enter personal health information.</div>',
-        unsafe_allow_html=True
-    )
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.history = []
+        st.rerun()
 
-
-# ── HEADER ───────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# HEADER
+# ─────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="app-header">
-    <div class="logo">🏥</div>
+<div class="main-header">
+    <div class="logo">🩺</div>
     <div>
         <h1>Medical AI Assistant</h1>
-        <div class="sub">
-            <span>Powered by your textbook library</span>
-            <span class="badge-online"><span class="dot-pulse"></span>Online</span>
+        <div class="subtext">
+            Consultant-level medical reasoning powered by your AI textbook system
+        </div>
+
+        <div class="online">
+            <div class="pulse"></div>
+            Advanced Clinical Intelligence Active
         </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# ─────────────────────────────────────────────────────────────
+# WELCOME
+# ─────────────────────────────────────────────────────────────
+if not st.session_state.messages:
 
-# ── WELCOME SCREEN ───────────────────────────────────────────
-def render_welcome():
     st.markdown("""
-    <div class="welcome-wrap">
-        <div class="welcome-icon">📖</div>
-        <h2>What would you like to know?</h2>
-        <p>Ask any clinical question. I'll answer based on your medical textbook library with structured, consultant‑level responses.</p>
-        <div class="disclaimer">
-            Your questions are processed securely. No personal data is stored. This tool is for educational use only and does not replace professional medical advice.
-        </div>
+    <div class="welcome">
+        <h2>Ask any clinical question</h2>
+
+        <p>
+        Get intelligent consultant-style answers with deep explanations,
+        diagnostic reasoning, management plans, and clinical pearls.
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
+# ─────────────────────────────────────────────────────────────
+# RENDER CHAT
+# ─────────────────────────────────────────────────────────────
+def render_message(role, content):
 
-# ── RENDER MESSAGES ──────────────────────────────────────────
-def render_message(role, content, sources=None, is_fallback=False):
     if role == "user":
+
         st.markdown(f"""
-        <div class="msg-row user">
-            <div class="avatar user-av">🧑‍⚕️</div>
-            <div class="bubble user">{content}</div>
-        </div>""", unsafe_allow_html=True)
+        <div class="msg user">
+            <div class="avatar">🧑‍⚕️</div>
+            <div class="bubble">
+                {content}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
     else:
-        bubble_class = "bubble ai" + (" fallback" if is_fallback else "")
-        src_html = ""
-        if sources:
-            tags = "".join(f'<span class="src-tag">📖 {s}</span>' for s in sources)
-            src_html = f'<div class="sources-bar"><span class="src-label">Sources:</span>{tags}</div>'
-        st.markdown(f'<div class="msg-row"><div class="avatar ai-av">🤖</div><div class="{bubble_class}">', unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="msg assistant">
+            <div class="avatar">🤖</div>
+            <div class="bubble">
+        """, unsafe_allow_html=True)
+
         st.markdown(content)
-        if src_html:
-            st.markdown(src_html, unsafe_allow_html=True)
-        st.markdown('</div></div>', unsafe_allow_html=True)
 
+        st.markdown("""
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-# ── FEEDBACK & SUGGESTION HELPERS ─────────────────────────────
-SUGGESTIONS = [
-    ("Explain more", "Explain more details about this topic"),
-    ("Risk factors", "What are the risk factors?"),
-    ("Treatment", "How is it treated?"),
-    ("Complications", "What are the complications?")
-]
+# Render old messages
+for msg in st.session_state.messages:
+    render_message(msg["role"], msg["content"])
 
-def set_feedback(idx, val):
-    st.session_state.messages[idx]["feedback"] = val
+# ─────────────────────────────────────────────────────────────
+# IMPROVED ASK BAR
+# ─────────────────────────────────────────────────────────────
+prompt = st.chat_input(
+    "Ask anything clinical... diagnosis, surgery, management, interpretation..."
+)
 
-def set_prefill(q):
-    st.session_state.prefill = q
-
-
-# ── DISPLAY MESSAGES ─────────────────────────────────────────
-if not st.session_state.messages:
-    render_welcome()
-else:
-    last_assistant_idx = None
-    for i in range(len(st.session_state.messages)-1, -1, -1):
-        if st.session_state.messages[i]["role"] == "assistant":
-            last_assistant_idx = i
-            break
-
-    for i, msg in enumerate(st.session_state.messages):
-        render_message(
-            msg["role"],
-            msg["content"],
-            msg.get("sources"),
-            msg.get("is_fallback", False)
-        )
-
-        if msg["role"] == "assistant" and i == last_assistant_idx:
-            # Feedback
-            if msg.get("feedback") is None:
-                col_fb1, col_fb2, _ = st.columns([0.1, 0.1, 0.8])
-                with col_fb1:
-                    st.button("👍", key=f"fb_up_{i}", help="Helpful",
-                              on_click=set_feedback, args=(i, "positive"))
-                with col_fb2:
-                    st.button("👎", key=f"fb_down_{i}", help="Not helpful",
-                              on_click=set_feedback, args=(i, "negative"))
-            else:
-                st.caption(f"Feedback: {'👍 helpful' if msg['feedback']=='positive' else '👎 not helpful'}")
-
-            # Suggestion buttons
-            st.markdown('<div class="suggestion-btns">', unsafe_allow_html=True)
-            cols = st.columns(len(SUGGESTIONS))
-            for idx, (label, question) in enumerate(SUGGESTIONS):
-                with cols[idx]:
-                    st.button(label, key=f"sugg_{i}_{idx}",
-                              on_click=set_prefill, args=(question,))
-            st.markdown('</div>', unsafe_allow_html=True)
-
-
-# ── CHAT INPUT ───────────────────────────────────────────────
-prompt = st.chat_input("Ask a clinical question (e.g. 'Management of acute appendicitis')")
 if st.session_state.prefill:
     prompt = st.session_state.prefill
     st.session_state.prefill = None
 
-
-# ── PROCESS QUESTION ─────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# HANDLE QUESTION
+# ─────────────────────────────────────────────────────────────
 if prompt:
-    render_message("user", prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
 
-    thinking_placeholder = st.empty()
-    thinking_placeholder.markdown("""
+    render_message("user", prompt)
+
+    st.session_state.messages.append({
+        "role":"user",
+        "content":prompt
+    })
+
+    thinking = st.empty()
+
+    thinking.markdown("""
     <div class="thinking">
-        <div class="thinking-dots">
-            <span></span><span></span><span></span>
+        <div style="display:flex;gap:5px">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
         </div>
-        Searching textbooks and generating answer...
+
+        <div>
+            Analyzing clinical data and generating expert response...
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    stream, sources, is_fallback = ask(prompt, st.session_state.history_pairs)
-    thinking_placeholder.empty()
+    stream = ask_ai(prompt, st.session_state.history)
 
-    response_ph = st.empty()
+    thinking.empty()
+
+    response_placeholder = st.empty()
+
     full_response = ""
-    for chunk in stream:
-        token = chunk.choices[0].delta.content if hasattr(chunk, 'choices') else chunk
-        if token is None:
-            continue
-        full_response += token
-        response_ph.markdown(full_response + "▌")
-    response_ph.empty()
 
-    render_message("assistant", full_response, sources, is_fallback)
+    for chunk in stream:
+
+        token = chunk.choices[0].delta.content or ""
+
+        full_response += token
+
+        response_placeholder.markdown(full_response + "▌")
+
+    response_placeholder.empty()
+
+    full_response = clean_response(full_response)
+
+    render_message("assistant", full_response)
 
     st.session_state.messages.append({
-        "role": "assistant",
-        "content": full_response,
-        "sources": list(sources),
-        "is_fallback": is_fallback,
-        "feedback": None
+        "role":"assistant",
+        "content":full_response
     })
-    st.session_state.history_pairs.append({"q": prompt, "a": full_response})
+
+    st.session_state.history.append({
+        "q":prompt,
+        "a":full_response
+    })
