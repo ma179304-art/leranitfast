@@ -1,996 +1,898 @@
-"""
-╔══════════════════════════════════════════════════════════════════╗
-║         MedConsult AI — World's Best Clinical Intelligence       ║
-║         v3.0 — Exam Engine + Patient Management Protocol         ║
-╚══════════════════════════════════════════════════════════════════╝
-
-5 Intelligent Modes:
-  📝 EXAM      — USMLE / MRCS / FCPS / MRCP structured answers
-  🏥 MANAGEMENT — Step-by-step patient management protocols
-  🔬 DIAGNOSIS  — Systematic diagnostic reasoning
-  💊 DRUG       — Pharmacology & prescribing reference
-  🩺 CLINICAL   — Comprehensive clinical consultation
-"""
-
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MEDCONSULT AI  v3.0
+#  Elite Clinical Intelligence — Exam-Optimised + Consultant-Grade Management
+#  Stack: Streamlit · Groq LLaMA 3.3 70B · Qdrant Cloud · Sentence-Transformers
+# ═══════════════════════════════════════════════════════════════════════════════
+import re, os
 import streamlit as st
-import re
-from html import escape as html_escape
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from groq import Groq
 
-# ══════════════════════════════════════════════════════════════════════
-# 0 · PAGE CONFIG
-# ══════════════════════════════════════════════════════════════════════
+# ── PAGE CONFIG ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="MedConsult AI · Clinical Intelligence",
-    page_icon="🏥",
-    layout="centered",
-    initial_sidebar_state="expanded",
+    page_title="MedConsult AI | Elite Clinical Intelligence",
+    page_icon="🩺",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# ══════════════════════════════════════════════════════════════════════
-# 1 · CSS — PREMIUM MEDICAL UI
-# ══════════════════════════════════════════════════════════════════════
+# ── CONSTANTS — adjust to your deployment ─────────────────────────────────────
+COLLECTION    = os.getenv("QDRANT_COLLECTION",  "medical_textbooks")
+EMBED_MODEL   = os.getenv("EMBED_MODEL",        "sentence-transformers/all-MiniLM-L6-v2")
+GROQ_MODEL    = "llama-3.3-70b-versatile"
+RAG_TOP_K     = 10        # retrieve more chunks → richer context
+MAX_TOKENS    = 4096      # longer, comprehensive answers
+TEMPERATURE   = 0.20      # factual & consistent
+HISTORY_TURNS = 6         # conversation pairs to include
+SCORE_THRESH  = 0.30      # minimum Qdrant relevance score
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CSS — CLEAN PROFESSIONAL MEDICAL UI
+# ═══════════════════════════════════════════════════════════════════════════════
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-    --accent:       #2563eb;
-    --accent-lite:  #eff6ff;
-    --success:      #16a34a;
-    --warning:      #d97706;
-    --danger:       #dc2626;
-    --bg:           #f8fafc;
-    --surface:      #ffffff;
-    --border:       #e2e8f0;
-    --txt:          #0f172a;
-    --txt-muted:    #64748b;
+  --bg:      #f0f4f8;
+  --surface: #ffffff;
+  --border:  #dde3ec;
+  --accent:  #2563eb;
+  --txt:     #1e293b;
+  --txt2:    #64748b;
+  --radius:  14px;
+  --shadow:  0 2px 16px rgba(0,0,0,.07);
 }
-
-* { box-sizing: border-box; }
-
-/* ── HIDE STREAMLIT CHROME ───────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, [class*="css"] {
+  font-family: 'Inter', sans-serif !important;
+  background: var(--bg) !important;
+}
 #MainMenu, footer, header { visibility: hidden; }
-.block-container { padding: 0 1rem 6rem; max-width: 880px; margin: auto; }
+.block-container { padding: 0 !important; max-width: 100% !important; }
 
-/* ── HEADER ──────────────────────────────────────────────── */
-.app-header {
-    background: linear-gradient(135deg, #0f2460 0%, #1d4ed8 55%, #0ea5e9 100%);
-    border-radius: 0 0 24px 24px;
-    padding: 28px 32px 24px;
-    margin: 0 -1rem 28px;
-    color: white;
-    position: relative;
-    overflow: hidden;
+/* ── HEADER ─────────────────────────────────────────────────── */
+.med-header {
+  background: linear-gradient(135deg, #0f2442 0%, #1d4ed8 100%);
+  padding: 18px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 4px 24px rgba(29,78,216,.3);
 }
-.app-header::before {
-    content: '';
-    position: absolute;
-    top: -60%;
-    right: -8%;
-    width: 320px;
-    height: 320px;
-    background: radial-gradient(circle, rgba(255,255,255,.07) 0%, transparent 70%);
-    border-radius: 50%;
+.logo { font-size: 1.45rem; font-weight: 700; color: #fff; letter-spacing: -.02em; }
+.logo span { color: #7dd3fc; }
+.live-badge {
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.22);
+  color: #e2e8f0;
+  font-size: .76rem;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  letter-spacing: .03em;
 }
-.header-title {
-    font-family: 'Inter', sans-serif;
-    font-size: 1.65rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 0 0 5px;
+.pulse-dot {
+  width: 8px; height: 8px;
+  background: #4ade80;
+  border-radius: 50%;
+  animation: pulse 1.8s infinite;
 }
-.header-sub {
-    font-size: .86rem;
-    opacity: .82;
-    margin: 0 0 16px;
-    font-weight: 400;
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.6)} }
+
+/* ── CHAT WRAPPER ───────────────────────────────────────────── */
+.chat-wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 140px; }
+
+/* ── WELCOME CARD ───────────────────────────────────────────── */
+.welcome-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 36px 32px;
+  text-align: center;
+  box-shadow: var(--shadow);
+  margin: 28px 0;
 }
-.mode-badges {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-.mode-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 13px;
-    border-radius: 20px;
-    font-size: .72rem;
-    font-weight: 600;
-    letter-spacing: .04em;
-    border: 1.5px solid rgba(255,255,255,.30);
-    background: rgba(255,255,255,.10);
-    color: white;
-}
-.pulse {
-    width: 7px;
-    height: 7px;
-    background: #4ade80;
-    border-radius: 50%;
-    animation: pulse-anim 1.8s ease-in-out infinite;
-}
-@keyframes pulse-anim {
-    0%, 100% { opacity:1; transform:scale(1); }
-    50%       { opacity:.5; transform:scale(1.4); }
+.welcome-card h2 { font-size: 1.45rem; font-weight: 700; color: var(--txt); margin-bottom: 12px; }
+.welcome-card p  { color: var(--txt2); line-height: 1.75; font-size: .97rem; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+.chip {
+  background: #eff6ff; border: 1px solid #bfdbfe;
+  color: var(--accent); font-size: .8rem; font-weight: 600;
+  padding: 6px 14px; border-radius: 999px;
 }
 
-/* ── MODE INDICATOR PILLS ────────────────────────────────── */
-.qmode {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 14px;
-    border-radius: 20px;
-    font-size: .74rem;
-    font-weight: 700;
-    margin-bottom: 10px;
-    letter-spacing: .05em;
-    text-transform: uppercase;
+/* ── QTYPE BADGE ────────────────────────────────────────────── */
+.qtype-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: .7rem; font-weight: 700; letter-spacing: .06em;
+  padding: 3px 10px; border-radius: 999px;
+  text-transform: uppercase; margin-bottom: 8px;
 }
-.qmode-exam       { background: #ede9fe; color: #6d28d9; }
-.qmode-management { background: #dbeafe; color: #1d4ed8; }
-.qmode-diagnosis  { background: #dcfce7; color: #15803d; }
-.qmode-drug       { background: #fef3c7; color: #92400e; }
-.qmode-clinical   { background: #e0f2fe; color: #0369a1; }
+.qtype-exam       { background:#fef9c3; color:#854d0e; border:1px solid #fde047; }
+.qtype-case       { background:#dbeafe; color:#1d4ed8; border:1px solid #93c5fd; }
+.qtype-management { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+.qtype-patho      { background:#fce7f3; color:#9d174d; border:1px solid #f9a8d4; }
+.qtype-pharma     { background:#f3e8ff; color:#6d28d9; border:1px solid #d8b4fe; }
+.qtype-interp     { background:#ffedd5; color:#9a3412; border:1px solid #fdba74; }
+.qtype-anatomy    { background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; }
+.qtype-procedure  { background:#ecfdf5; color:#065f46; border:1px solid #6ee7b7; }
+.qtype-general    { background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; }
 
-/* ── MESSAGES ────────────────────────────────────────────── */
-.msg {
-    display: flex;
-    gap: 12px;
-    margin: 18px 0;
-    align-items: flex-start;
-}
-.msg.user { flex-direction: row-reverse; }
-.avatar {
-    width: 38px;
-    height: 38px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.1rem;
-    flex-shrink: 0;
-    box-shadow: 0 2px 10px rgba(0,0,0,.14);
-}
-.msg.user .avatar     { background: linear-gradient(135deg, #2563eb, #0ea5e9); }
-.msg.assistant .avatar{ background: linear-gradient(135deg, #1e3a8a, #1d4ed8); }
-.bubble {
-    max-width: 83%;
-    padding: 14px 18px;
-    border-radius: 18px;
-    font-size: .93rem;
-    line-height: 1.68;
-    font-family: 'Inter', sans-serif;
-}
-.msg.user .bubble {
-    background: linear-gradient(135deg, #2563eb, #1d4ed8);
-    color: white;
-    border-radius: 18px 4px 18px 18px;
-    box-shadow: 0 4px 20px rgba(37,99,235,.28);
-}
-.msg.assistant .bubble {
-    background: var(--surface);
-    color: var(--txt);
-    border: 1px solid var(--border);
-    border-radius: 4px 18px 18px 18px;
-    box-shadow: 0 2px 14px rgba(0,0,0,.06);
-    width: 100%;
+/* ── CHAT MESSAGES ──────────────────────────────────────────── */
+[data-testid="stChatMessage"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  padding: 16px 20px !important;
+  margin: 6px 0 !important;
+  box-shadow: var(--shadow) !important;
 }
 
-/* ── THINKING ANIMATION ──────────────────────────────────── */
+/* ── MARKDOWN: TABLES ───────────────────────────────────────── */
+.stMarkdown table { width: 100%; border-collapse: collapse; font-size: .9rem; margin: 12px 0; }
+.stMarkdown th    { background: #1d4ed8; color: #fff; padding: 9px 13px; text-align: left; }
+.stMarkdown td    { padding: 8px 13px; border: 1px solid var(--border); }
+.stMarkdown tr:nth-child(even) td { background: #f8fafc; }
+
+/* ── MARKDOWN: INLINE ───────────────────────────────────────── */
+.stMarkdown code {
+  background: #eff6ff; color: #1d4ed8;
+  padding: 2px 6px; border-radius: 4px; font-size: .9em;
+}
+.stMarkdown blockquote {
+  border-left: 4px solid var(--accent);
+  padding: 4px 12px; color: var(--txt2); margin: 8px 0;
+}
+.stMarkdown h1, .stMarkdown h2 { color: var(--txt); margin: 16px 0 8px; }
+.stMarkdown h3 { color: var(--accent); margin: 12px 0 6px; }
+
+/* ── THINKING INDICATOR ─────────────────────────────────────── */
 .thinking {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 20px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    color: var(--txt-muted);
-    font-size: .9rem;
-    font-style: italic;
-    margin: 12px 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 20px;
+  color: var(--txt2); font-size: .9rem; max-width: 400px;
+  box-shadow: var(--shadow); margin: 6px 0;
 }
-.dot {
-    width: 8px;
-    height: 8px;
-    background: var(--accent);
-    border-radius: 50%;
-    animation: bounce .9s infinite;
-}
-.dot:nth-child(2) { animation-delay: .16s; }
-.dot:nth-child(3) { animation-delay: .32s; }
-@keyframes bounce {
-    0%, 100% { transform: translateY(0); }
-    50%       { transform: translateY(-6px); }
-}
+.dot { width:8px; height:8px; background:var(--accent); border-radius:50%; animation:bounce .8s infinite alternate; }
+.dot:nth-child(2){ animation-delay:.2s }
+.dot:nth-child(3){ animation-delay:.4s }
+@keyframes bounce{ from{transform:translateY(0)} to{transform:translateY(-6px)} }
 
-/* ── WELCOME ──────────────────────────────────────────────── */
-.welcome {
-    text-align: center;
-    padding: 44px 16px 32px;
-}
-.welcome h2 {
-    font-size: 1.55rem;
-    font-weight: 700;
-    color: var(--txt);
-    margin-bottom: 12px;
-    letter-spacing: -.02em;
-}
-.welcome p {
-    color: var(--txt-muted);
-    font-size: .97rem;
-    max-width: 530px;
-    margin: 0 auto 30px;
-    line-height: 1.75;
-}
-
-/* ── CHAT INPUT ───────────────────────────────────────────── */
+/* ── INPUT BAR ──────────────────────────────────────────────── */
 [data-testid="stChatInput"] {
-    background: var(--surface) !important;
-    border: 2px solid var(--border) !important;
-    border-radius: 26px !important;
-    padding: 8px !important;
-    transition: all .25s ease !important;
-    box-shadow: 0 4px 24px rgba(0,0,0,.07), inset 0 1px 0 rgba(255,255,255,.9) !important;
-    position: sticky;
-    bottom: 10px;
+  background: #ffffff !important;
+  border: 2px solid var(--border) !important;
+  border-radius: 24px !important;
+  padding: 8px !important;
+  box-shadow: 0 4px 24px rgba(0,0,0,.09) !important;
+  position: sticky; bottom: 12px;
+  transition: all .25s ease !important;
 }
 [data-testid="stChatInput"]:focus-within {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 4px rgba(37,99,235,.09), 0 8px 32px rgba(37,99,235,.14) !important;
-    transform: translateY(-1px);
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 4px rgba(37,99,235,.12), 0 8px 30px rgba(37,99,235,.15) !important;
+  transform: translateY(-1px);
 }
 [data-testid="stChatInput"] textarea,
-[data-testid="stChatInput"] textarea:focus,
-[data-testid="stChatInput"] div[contenteditable] {
-    color: #000000 !important;
-    caret-color: #1d4ed8 !important;
-    font-size: 1rem !important;
-    font-family: 'Inter', sans-serif !important;
-    background: transparent !important;
-    line-height: 1.7 !important;
-    padding-top: 8px !important;
-    -webkit-text-fill-color: #000000 !important;
+[data-testid="stChatInput"] textarea:focus {
+  color: #000 !important;
+  caret-color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  font-size: 1rem !important;
+  font-family: 'Inter', sans-serif !important;
+  background: transparent !important;
 }
 [data-testid="stChatInput"] textarea::placeholder {
-    color: #94a3b8 !important;
-    -webkit-text-fill-color: #94a3b8 !important;
-}
-
-/* ── SIDEBAR ──────────────────────────────────────────────── */
-section[data-testid="stSidebar"] {
-    background: #f1f5f9;
-}
-section[data-testid="stSidebar"] .stButton button {
-    font-size: .82rem;
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: 8px;
-    background: white;
-    border: 1px solid #e2e8f0;
-    color: #334155;
-    transition: all .15s;
-}
-section[data-testid="stSidebar"] .stButton button:hover {
-    background: #eff6ff;
-    border-color: var(--accent);
-    color: var(--accent);
+  color: #94a3b8 !important;
+  -webkit-text-fill-color: #94a3b8 !important;
 }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 2 · RESOURCE LOADING (cached)
-# ══════════════════════════════════════════════════════════════════════
-@st.cache_resource(show_spinner="⚕️ Loading medical intelligence…")
-def load_resources():
-    embed_model   = SentenceTransformer("all-MiniLM-L6-v2")
-    qdrant_client = QdrantClient(
-        url=st.secrets["QDRANT_URL"],
-        api_key=st.secrets["QDRANT_API_KEY"],
-    )
-    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    return embed_model, qdrant_client, groq_client
-
-embed_model, qdrant_client, groq_client = load_resources()
-COLLECTION = st.secrets.get("QDRANT_COLLECTION", "medical_textbooks")
-
-
-# ══════════════════════════════════════════════════════════════════════
-# 3 · INTELLIGENT 5-MODE QUERY CLASSIFIER
-# ══════════════════════════════════════════════════════════════════════
-# Phrase-level tokens for precise mode detection
-_EXAM_PHRASES = [
-    "most common", "best initial", "next step", "most likely", "drug of choice",
-    "investigation of choice", "first line", "which of the following", "all except",
-    "not true", "except", "pathognomonic", "characteristic finding", "classic sign",
-    "usmle", "mrcs", "fcps", "mrcp", "mcq", "single best answer", "incorrect",
-    "true statement", "false statement", "gold standard", "sensitivity", "specificity",
-    "all are true except", "which is not", "which one is false",
-]
-_MGMT_PHRASES = [
-    "how to manage", "how do you manage", "management of", "treatment of",
-    "treat this", "protocol for", "approach to", "resuscitation", "how would you treat",
-    "resuscitate", "immediate management", "step by step", "algorithm for",
-    "what is the management", "emergency management", "icu management",
-]
-_DIAG_PHRASES = [
-    "what is the diagnosis", "most likely diagnosis", "what is causing", "differential",
-    "ddx", "how do you diagnose", "what are the signs", "clinical features of",
-    "pathophysiology of", "mechanism of", "etiology of", "causes of",
-    "how does it present", "what would you find",
-]
-_DRUG_PHRASES = [
-    "mechanism of action", "side effects of", "contraindications of", "dose of",
-    "dosage of", "drug interaction", "adverse effects of", "pharmacology of",
-    "how does", "work as a drug", "antidote for", "toxicity of", "overdose of",
-    "compare heparin", "compare warfarin", "which antibiotic",
-]
-
-def classify_query(q: str) -> str:
-    ql = q.lower().strip()
-    
-    exam_score = sum(2 for p in _EXAM_PHRASES if p in ql)   # weighted x2
-    mgmt_score = sum(1 for p in _MGMT_PHRASES if p in ql)
-    diag_score = sum(1 for p in _DIAG_PHRASES if p in ql)
-    drug_score = sum(2 for p in _DRUG_PHRASES if p in ql)   # weighted x2
-    
-    scores = {
-        "exam":       exam_score,
-        "management": mgmt_score,
-        "diagnosis":  diag_score,
-        "drug":       drug_score,
-    }
-    best_mode  = max(scores, key=scores.get)
-    best_score = scores[best_mode]
-    return best_mode if best_score > 0 else "clinical"
-
-MODE_META = {
-    "exam":       {"icon": "📝", "label": "EXAM MODE",        "css": "qmode-exam"},
-    "management": {"icon": "🏥", "label": "MANAGEMENT MODE",  "css": "qmode-management"},
-    "diagnosis":  {"icon": "🔬", "label": "DIAGNOSIS MODE",   "css": "qmode-diagnosis"},
-    "drug":       {"icon": "💊", "label": "PHARMACOLOGY",     "css": "qmode-drug"},
-    "clinical":   {"icon": "🩺", "label": "CLINICAL MODE",    "css": "qmode-clinical"},
+# ═══════════════════════════════════════════════════════════════════════════════
+#  QUESTION-TYPE CLASSIFIER
+# ═══════════════════════════════════════════════════════════════════════════════
+_Q_PATTERNS = {
+    "exam_mcq": [
+        r"(?i)\b(which|what is the (most|best|first|next)|most (likely|appropriate|common)|toc|doc|drug of choice|treatment of choice|correct answer)\b",
+        r"(?i)\b(mcq|usmle|mrcp|mrcs|fcps|plab|amc|step [123]|high.yield|exam question)\b",
+        r"(?i)^[A-E][.)]\s",
+    ],
+    "case_scenario": [
+        r"(?i)\b\d{1,3}[- ]?(year|yr)[s]?[- ]?old\b",
+        r"(?i)\b(presents? with|brought to|comes? (in|to)|referred with|admitted with|a&e|er|emergency)\b",
+        r"(?i)\b(hx:|o/e:|vitals?:|bp:|hr:|rr:|spo2:|temp:|on examination|complain[ts]?)\b",
+    ],
+    "management": [
+        r"(?i)\b(how (do|would|should) (you|i|we)|how (to|is it) manag|management of|manage|treatment( of)?|protocol for|algorithm for|approach to)\b",
+        r"(?i)\b(step[s]? (in|of|for)|immediate (management|treatment)|first.line|second.line|empiric|definitive treatment)\b",
+    ],
+    "pathophysiology": [
+        r"(?i)\b(pathophysiology|pathogenesis|mechanism of|why does|how does .+ cause|what causes|etiology|aetiology|underlying (cause|mechanism))\b",
+    ],
+    "pharmacology": [
+        r"(?i)\b(drug[s]?|medication|antibiotic|dose|dosage|pharmacokinetics|pharmacodynamics|mechanism of action of|side effect|adverse effect|contraindication|drug interaction|moa of)\b",
+    ],
+    "interpretation": [
+        r"(?i)\b(interpret|what (does|do) (this|these|the)|findings?|report|ecg|ekg|x.?ray|ct scan|mri|ultrasound|uss|abg|arterial blood gas|lab result[s]?)\b",
+    ],
+    "anatomy": [
+        r"(?i)\b(anatomy|anatomical|nerve supply|blood supply|lymphatic drainage|boundaries|relations?|surgical triangle|spaces?|compartment[s]?|layers?)\b",
+    ],
+    "procedure": [
+        r"(?i)\b(procedure|technique|how (to|is it done)|steps? (for|of)|how (do|would) you perform|operation|incision|surgical (steps?|technique|approach))\b",
+    ],
 }
 
+_QTYPE_LABELS = {
+    "exam_mcq":         ("🎯 EXAM / MCQ",        "qtype-exam"),
+    "case_scenario":    ("🏥 CLINICAL CASE",      "qtype-case"),
+    "management":       ("📋 MANAGEMENT",         "qtype-management"),
+    "pathophysiology":  ("🧬 PATHOPHYSIOLOGY",    "qtype-patho"),
+    "pharmacology":     ("💊 PHARMACOLOGY",       "qtype-pharma"),
+    "interpretation":   ("📊 INTERPRETATION",     "qtype-interp"),
+    "anatomy":          ("🗺️ ANATOMY",            "qtype-anatomy"),
+    "procedure":        ("🔧 PROCEDURE",          "qtype-procedure"),
+    "general_clinical": ("🩺 CLINICAL",           "qtype-general"),
+}
 
-# ══════════════════════════════════════════════════════════════════════
-# 4 · 5 SPECIALIZED SYSTEM PROMPTS
-# ══════════════════════════════════════════════════════════════════════
-_PERSONA = """
-You are Professor James Harrington — a world-renowned physician, surgeon, and medical examiner with 30+ years at leading academic medical centres.
-You have trained thousands of candidates for USMLE, MRCS, FCPS, MRCP, and FRCS. You have personally managed every type of complex clinical case across medicine and surgery.
+def classify_question(q: str) -> str:
+    """Score each question type and return the best match."""
+    scores = {
+        k: sum(bool(re.search(p, q)) for p in v)
+        for k, v in _Q_PATTERNS.items()
+    }
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "general_clinical"
 
-━━━ ABSOLUTE RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• NEVER mention textbooks, sources, context, or retrieval — speak as your own expert knowledge
-• NEVER say "based on the context" or "according to the reference"
-• Always give the DIRECT ANSWER first — no preamble, no hedging
-• Use rich markdown generously: ##headers, **bold**, tables, emojis
-• Never truncate — be exhaustive, comprehensive, and complete
-• Use clinical abbreviations naturally (ABG, ERCP, INR, etc.)
-• Be confident and authoritative — clinicians and candidates depend on you
+
+def enrich_query(q: str, q_type: str) -> str:
+    """Prepend domain keywords to improve RAG retrieval precision."""
+    if q_type == "exam_mcq":
+        # Strip MCQ option lines (A. B. C. …) so we search the clinical scenario
+        core = re.sub(r"(?m)^\s*[A-Ea-e][.)\s].+$", "", q)
+        core = re.sub(r"\s+", " ", core).strip()
+        return core if len(core) > 20 else q
+    prefixes = {
+        "management":      "management treatment protocol ",
+        "pathophysiology": "pathophysiology mechanism pathogenesis ",
+        "pharmacology":    "drug mechanism dose pharmacology ",
+        "anatomy":         "anatomy blood supply nerve supply relations ",
+        "procedure":       "surgical technique steps procedure ",
+    }
+    return prefixes.get(q_type, "") + q
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SYSTEM PROMPTS — ONE PER QUESTION TYPE
+# ═══════════════════════════════════════════════════════════════════════════════
+_BASE = """
+ABSOLUTE RULES:
+• NEVER mention sources, textbooks, context chunks, retrieval, or databases.
+• NEVER say "based on the context / according to the reference".
+• Speak from first-person authority — this is your own expert clinical knowledge.
+• Answers MUST be exhaustive — never truncate or over-summarise.
+• Include specific drug doses, routes, and frequencies wherever relevant.
+• Include validated scoring systems (CURB-65, SOFA, Glasgow, Child-Pugh, Wells, CHA₂DS₂-VASc, etc.) where applicable.
+• Emoji key: ⚠️ warning  ✅ key action  🔑 high-yield pearl  📊 scoring system
+              💊 drug/dose  🔬 investigation  🏥 management step  🎯 direct answer
 """
 
-# ─── MODE 1: EXAM ──────────────────────────────────────────
-PROMPT_EXAM = _PERSONA + """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODE: EXAM ANSWER ENGINE  |  USMLE · MRCS · FCPS · MRCP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SYSTEM_PROMPTS = {
 
-Structure EVERY exam answer using ALL of these sections:
+# ── EXAM MCQ ──────────────────────────────────────────────────────────────────
+"exam_mcq": _BASE + """
+You are a world-class postgraduate medical exam coach with 25 years' experience training
+candidates for USMLE Steps 1–3, MRCP, MRCS, FCPS, PLAB, and AMC. Your goal: maximum marks.
 
-## ✅ THE ANSWER
-State the correct answer immediately and with absolute confidence.
+RESPONSE STRUCTURE (follow exactly):
 
-## 🧠 CORE REASONING  (Why this answer?)
-2–4 crisp sentences explaining exactly what concept is being tested and why this answer is correct.
-Think like the examiner — what knowledge gap is this question designed to reveal?
+## 🎯 CORRECT ANSWER
+State the answer immediately — bold and unambiguous.
 
-## ❌ OPTION ELIMINATION
-For EVERY wrong option: state it, then in ONE sentence explain precisely why it is wrong.
-This is the single most powerful technique for exam success.
+## ✅ WHY THIS IS CORRECT
+Core reasoning in 2–3 sentences focused on the examiner's teaching point.
 
-## 🔑 THE UNDERLYING RULE
-A single memorable, portable clinical rule that makes this answer unforgettable.
-Format: _"Rule: [condition] → [action/finding] because [mechanism]."_
+## ❌ WHY EACH DISTRACTOR IS WRONG
+For EVERY wrong option: name what it actually is, then the specific reason it doesn't fit this scenario.
 
-## 📚 HIGH-YIELD FACTS  (7–10 bullets)
-The most commonly examined facts on this topic:
-• Classic presentation
-• Classic investigation + result
-• Classic treatment / drug of choice
-• Classic complication
-• Classic differentiator from similar conditions
-• Numbers examiners love (thresholds, percentages, timelines)
+## 🧬 CORE CONCEPT BEING TESTED
+What is the examiner really testing? Deliver a concise high-yield mini-lecture.
 
-## 🔢 KEY NUMBERS & THRESHOLDS
-Every number an examiner could test on this topic.
-Present as a clean table with ≥3 items:
-| Parameter | Value | Clinical Significance |
-|---|---|---|
+## 🔑 HIGH-YIELD EXAM PEARLS
+2–4 bullet points examiners love to test on this topic. Specific and memorable.
 
-## 💡 MNEMONICS & MEMORY AIDS
-One or two powerful mnemonics that lock the concept in permanently.
+## 🚨 THE TRAP
+What mistake do most candidates make? How to avoid it.
 
-## ⚠️ CLASSIC EXAM TRAPS
-What mistakes do candidates typically make on this topic?
-What does the examiner love to trick you with? Be specific.
+## 🧠 MNEMONIC
+A memorable device to lock in the concept (only if genuinely helpful).
 
-## 📊 SCORING SYSTEMS  (if applicable)
-| Score Name | Parameters | Threshold for Action |
-|---|---|---|
-"""
+## 📊 ADJACENT HIGH-YIELD FACTS
+Related facts that could appear in the next MCQ on this topic cluster.
+""",
 
-# ─── MODE 2: MANAGEMENT ────────────────────────────────────
-PROMPT_MGMT = _PERSONA + """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODE: PATIENT MANAGEMENT PROTOCOL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ── CLINICAL CASE ─────────────────────────────────────────────────────────────
+"case_scenario": _BASE + """
+You are a world-class senior consultant running a clinical case conference, teaching
+registrars and final-year candidates to think like seasoned specialists.
 
-Structure EVERY management answer using ALL of these sections:
+RESPONSE STRUCTURE (follow exactly):
 
-## 🚨 IMMEDIATE RESUSCITATION  (First 5–15 Minutes)
-**ABCDE Approach** — specific actions for THIS condition:
-- **A – Airway:** ...
-- **B – Breathing:** ...
-- **C – Circulation:** ...
-- **D – Disability:** ...
-- **E – Exposure:** ...
-List critical thresholds that demand immediate escalation.
+## 🩺 FIRST IMPRESSION & TRIAGE
+Emergency level. ABCDE if acute. What hits you first and why?
 
-## 📋 FOCUSED HISTORY & EXAMINATION
-Key history points that change management | Examination findings with their clinical significance
+## 🎯 WORKING DIAGNOSIS
+State it confidently with your immediate reasoning (2–3 sentences).
+
+## 🔍 DIFFERENTIAL DIAGNOSIS
+| Rank | Diagnosis | Supporting Features | Features Against |
+|------|-----------|--------------------| -----------------|
+Rank from most to least likely.
 
 ## 🔬 INVESTIGATIONS
-| Investigation | Timing | Expected Finding | Action Trigger |
-|---|---|---|---|
-Order: Bedside → Laboratory → Imaging → Invasive / Specialist
+**Bedside:** ECG, urine dip, glucose, ABG, FAST — with expected findings
+**Bloods:** FBC, U&E, LFTs, coagulation, specific markers — with expected findings
+**Imaging:** Modality, reason, priority order, expected findings
+**Special / Invasive:** Endoscopy, biopsy, cardiac catheterisation, etc.
 
-## 💊 MEDICAL / CONSERVATIVE MANAGEMENT
-| Drug | Dose | Route | Frequency | Duration | Monitoring |
-|---|---|---|---|---|---|
-Use REAL drug names and REAL doses with real routes.
+## 📋 MANAGEMENT PLAN
+**Immediate (0–60 min):** Resuscitation, emergency drugs with doses, monitoring
+**Short-term (1–24 h):** Stabilisation, initial therapy
+**Definitive:** Medical / surgical / interventional
+**Surgical management** (if applicable): Indications, timing, operative approach
 
-## 🔪 SURGICAL / PROCEDURAL MANAGEMENT  (if applicable)
-**Indications:** (exact criteria)
-**Procedure:** name, approach, key steps
-**Intraoperative Priorities:** critical decision points and pitfalls
-**Post-operative Orders:** monitoring, fluids, medications, VTE prophylaxis
-
-## ⚠️ COMPLICATIONS TO ANTICIPATE
-| Complication | Onset | How to Recognise | Prevention / Management |
-|---|---|---|---|
-Separate sections: ⏰ Early (<24h) | 📅 Late (>24h) | 💀 Life-threatening
-
-## 📊 MONITORING & TARGETS
-| Parameter | Target | Frequency | Escalation Threshold |
-|---|---|---|---|
-
-## 🏥 DISPOSITION
-- **ICU criteria:** (specific triggers)
-- **Ward criteria:** (specific requirements)  
-- **Discharge criteria:** (objective thresholds)
-- **Referral triggers:** (who, when, why)
-
-## 🔑 CLINICAL PEARLS
-3 insights a senior would share at the bedside — the things NOT written in textbooks.
-"""
-
-# ─── MODE 3: DIAGNOSIS ─────────────────────────────────────
-PROMPT_DIAG = _PERSONA + """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODE: DIAGNOSTIC REASONING ENGINE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Structure EVERY diagnostic answer using ALL of these sections:
-
-## 🎯 MOST LIKELY DIAGNOSIS
-State it with confidence. Give the classic one-liner presentation that clinches it.
-
-## 🧬 PATHOPHYSIOLOGY
-The underlying mechanism — explained clearly and precisely.
-Why does this condition present THIS way? Connect pathophysiology to clinical features.
-
-## 🩺 CLINICAL FEATURES
-| Feature | This Condition | Clinical Significance |
-|---|---|---|
-**History:** what the patient says
-**Examination:** what you find on clinical exam
-**Red Flags / Alarm Symptoms:** what cannot be missed
-
-## 🔬 INVESTIGATIONS & INTERPRETATION
-| Investigation | Finding in This Condition | Why We Order It | Interpretation Tips |
-|---|---|---|---|
-Order: Bedside → Laboratory → Imaging → Histology / Special tests
-
-## 📊 DIFFERENTIAL DIAGNOSIS
-| Condition | Key Supporting Features | Key Differentiating Feature | How to Exclude |
-|---|---|---|---|
-Rank from most to least likely. Include dangerous must-not-miss alternatives.
-
-## 🏥 STAGING / GRADING  (if applicable)
-| Stage/Grade | Criteria | Clinical Implication | Management Impact |
-|---|---|---|---|
-
-## 🔍 PATHOGNOMONIC FEATURES
-The ONE hallmark finding that clinches this diagnosis. If none, state so explicitly.
-
-## 🚫 MUST-NOT-MISS DIAGNOSES
-Life-threatening alternatives that must be actively excluded.
-For each: how to recognise it and how to rule it out.
-
-## 💡 DIAGNOSTIC PEARLS
-4 pearls a senior would share — classic presentations, atypical variants, common diagnostic pitfalls.
-"""
-
-# ─── MODE 4: DRUG / PHARMACOLOGY ───────────────────────────
-PROMPT_DRUG = _PERSONA + """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODE: PHARMACOLOGY & DRUG REFERENCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Structure EVERY drug/pharmacology answer using ALL of these sections:
-
-## 💊 AT A GLANCE
-**Class:** | **Prototype:** | **Key Indication (one sentence):**
-
-## ⚙️ MECHANISM OF ACTION
-Precise molecular mechanism — be specific (receptor, enzyme, ion channel, etc.).
-Examiners love this. Include why mechanism explains both efficacy AND toxicity.
-
-## 📋 INDICATIONS
-- **Primary (licensed):**
-- **Secondary (off-label / common):**
-- **Absolute Contraindications:**
-- **Relative Contraindications:**
-
-## 💉 DOSING REFERENCE
-| Indication | Dose | Route | Frequency | Duration | Notes |
-|---|---|---|---|---|---|
-Include: renal dose adjustment | hepatic dose adjustment | elderly | paediatric
-
-## ⚠️ ADVERSE EFFECTS
-| Effect | Mechanism | Frequency | Management |
-|---|---|---|---|
-Separate: ✅ Common | 🔴 Serious/Rare | ☠️ Black-box warnings
-
-## 🔄 DRUG INTERACTIONS
-| Interacting Drug | Mechanism | Clinical Effect | Action Required |
-|---|---|---|---|
-
-## 🆘 OVERDOSE / TOXICITY
-**Presentation:** | **Antidote:** | **Management steps:**
-
-## 📊 MONITORING
-| Parameter | Baseline | Frequency | Target Range | Action if Abnormal |
-|---|---|---|---|---|
-
-## 🔑 EXAM PEARLS
-5 high-yield facts examiners love to test about this drug.
-"""
-
-# ─── MODE 5: CLINICAL (default comprehensive) ──────────────
-PROMPT_CLINICAL = _PERSONA + """
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODE: COMPREHENSIVE CLINICAL CONSULTATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Structure EVERY clinical answer using ALL of these sections:
-
-## 💬 DIRECT ANSWER
-One confident, precise sentence. What you need to know right now.
-
-## 🧬 PATHOPHYSIOLOGY
-The underlying mechanism — connect it to the clinical presentation.
-
-## 🩺 CLINICAL FEATURES
-**History:** what the patient says
-**Examination:** what you find
-**Red Flags:** what cannot be missed — ever
-
-## 🔬 INVESTIGATIONS
-| Investigation | Expected Finding | Clinical Significance | Priority |
-|---|---|---|---|
-
-## 🩻 DIAGNOSIS & DIFFERENTIAL
-- **Primary diagnosis:** with key supporting features
-- **Ranked differentials:** each with the ONE feature that distinguishes it
-
-## 💊 MANAGEMENT  (step-by-step)
-
-### 🚨 Immediate  (0–60 min)
-### 📅 Short-term  (Hours to Days)
-### 🏁 Definitive  (Days to Weeks)
-### 🔪 Surgical  _(if applicable — indications, procedure, timing)_
-
-Include ALL drug names, doses, routes, durations, and monitoring parameters.
+## 💊 PHARMACOTHERAPY
+| Drug | Dose | Route | Frequency | Duration | Notes / Cautions |
+|------|------|-------|-----------|----------|------------------|
 
 ## ⚠️ COMPLICATIONS
-| Complication | Timing | Recognition | Prevention & Management |
-|---|---|---|---|
+| Timing | Complication | How to Detect | Management |
+|--------|-------------|---------------|-----------|
+
+## 📊 SCORING SYSTEMS
+Every validated score relevant to this case with full interpretation.
 
 ## 👥 SPECIAL POPULATIONS
-Pregnancy | Elderly | Paediatric | Immunocompromised _(include only relevant ones)_
-
-## 📊 CLINICAL SCORING SYSTEMS
-Any validated scores relevant to this condition — with thresholds and action points.
+Pregnancy · Elderly · Paediatrics · Renal/Hepatic impairment — modifications?
 
 ## 🔑 CLINICAL PEARLS
-4–5 insights from senior clinical experience — the wisdom not in textbooks.
+4–5 insights a senior consultant would share that aren't in standard textbooks.
 
 ## 📈 PROGNOSIS & FOLLOW-UP
-Expected outcomes | Surveillance schedule | Escalation criteria
-"""
+Expected outcomes, monitoring parameters, discharge criteria, outpatient plan.
+""",
 
-PROMPTS = {
-    "exam":       PROMPT_EXAM,
-    "management": PROMPT_MGMT,
-    "diagnosis":  PROMPT_DIAG,
-    "drug":       PROMPT_DRUG,
-    "clinical":   PROMPT_CLINICAL,
+# ── MANAGEMENT ────────────────────────────────────────────────────────────────
+"management": _BASE + """
+You are a world-class senior consultant providing evidence-based management protocols
+for clinical practice and postgraduate examinations.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 🎯 MANAGEMENT OVERVIEW
+One paragraph on the overall approach and goals of therapy.
+
+## 🚨 IMMEDIATE ACTIONS (0–60 minutes)
+Numbered steps. ABCDE where relevant. IV access, monitoring, emergency drug doses.
+
+## 🏥 DEFINITIVE MANAGEMENT
+**Conservative / Medical:**
+**Surgical / Interventional:**
+**Supportive / Adjunctive:**
+
+## 💊 PHARMACOTHERAPY
+| Drug | Class | Dose | Route | Frequency | Key Notes / Cautions |
+|------|-------|------|-------|-----------|----------------------|
+
+## 📊 MONITORING PARAMETERS
+What to monitor, how often, target values/ranges.
+
+## ⚠️ COMPLICATIONS & HOW TO MANAGE THEM
+
+## 👥 SPECIAL POPULATIONS
+Pregnancy · Elderly · Renal impairment · Hepatic impairment — dose adjustments?
+
+## 🔑 MANAGEMENT PEARLS
+High-yield points that distinguish excellent from average management.
+
+## 📝 DISPOSITION
+ICU vs ward criteria, discharge criteria, outpatient follow-up plan.
+""",
+
+# ── PATHOPHYSIOLOGY ───────────────────────────────────────────────────────────
+"pathophysiology": _BASE + """
+You are a world-class pathophysiologist and clinical educator who bridges molecular
+mechanisms with bedside medicine for exam success and clinical mastery.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 🧬 CORE MECHANISM
+One clear opening paragraph — the big picture explained simply first.
+
+## 🔄 STEP-BY-STEP PATHOGENETIC SEQUENCE
+Numbered cascade. Specific — receptors, mediators, cytokines, signalling pathways.
+
+## 🔗 MECHANISM → CLINICAL FEATURES
+| Pathophysiological Event | Clinical / Examination Finding | Investigation Correlate |
+|--------------------------|-------------------------------|------------------------|
+
+## 💊 HOW PATHOPHYSIOLOGY DRIVES TREATMENT
+For each major treatment, explain WHY it works at a mechanistic level.
+
+## 🔬 INVESTIGATIONS THAT REFLECT THE MECHANISM
+Tests that directly measure or are altered by the pathophysiological process.
+
+## 🔑 HIGH-YIELD PATHOPHYSIOLOGY PEARLS
+Exam-focused, memorable, and clinically relevant.
+""",
+
+# ── PHARMACOLOGY ──────────────────────────────────────────────────────────────
+"pharmacology": _BASE + """
+You are a world-class clinical pharmacologist and postgraduate examination tutor.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 💊 DRUG PROFILE
+| Parameter | Details |
+|-----------|---------|
+| Generic name | |
+| Trade name(s) | |
+| Drug class | |
+| Prototype of class? | |
+
+## ⚙️ MECHANISM OF ACTION
+Molecular / receptor level. Specific and precise.
+
+## ✅ INDICATIONS WITH DOSES
+| Indication | Standard Dose | Route | Frequency | Notes |
+|------------|--------------|-------|-----------|-------|
+
+## 📈 PHARMACOKINETICS (ADME)
+- **Absorption:** Bioavailability, food effect, onset of action
+- **Distribution:** Volume of distribution, protein binding, CNS penetration
+- **Metabolism:** CYP enzymes (substrate / inhibitor / inducer)
+- **Elimination:** Half-life, renal vs biliary clearance, active metabolites
+
+## ⚠️ ADVERSE EFFECTS
+| System | Effect | Frequency | Clinical Notes |
+|--------|--------|-----------|---------------|
+
+## 🚫 CONTRAINDICATIONS
+| Type | Contraindication | Reason |
+|------|-----------------|--------|
+
+## 🔄 KEY DRUG INTERACTIONS
+| Interacting Drug | Mechanism | Clinical Effect | Action |
+|-----------------|-----------|----------------|--------|
+
+## 🔑 HIGH-YIELD PHARMACOLOGY PEARLS
+What examiners love to test about this drug or class.
+
+## 📊 CLASS COMPARISON
+How does this drug compare to others in its class? When to prefer each?
+""",
+
+# ── INTERPRETATION ────────────────────────────────────────────────────────────
+"interpretation": _BASE + """
+You are a world-class diagnostician teaching systematic, logical interpretation of
+clinical investigations for bedside mastery and examination excellence.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 📊 FINDINGS SUMMARY
+All abnormal findings. Critically abnormal values clearly flagged with ⚠️.
+
+## 🎯 PRIMARY INTERPRETATION
+What do these findings indicate? State the diagnosis or pattern clearly and confidently.
+
+## 🔄 SYSTEMATIC ANALYSIS
+Go through EVERY value / finding:
+Value → Normal range → Interpretation → Clinical significance
+
+## 🔍 DIFFERENTIAL DIAGNOSES
+Ranked, with the specific findings from this result set supporting each.
+
+## 📋 NEXT INVESTIGATIONS
+What additional tests are needed to confirm, refine, or exclude diagnoses?
+
+## 🏥 IMMEDIATE CLINICAL ACTION
+What needs to happen NOW based on these results?
+
+## 🔑 INTERPRETATION PEARLS
+Classic patterns, common pitfalls, and exam traps for this investigation type.
+""",
+
+# ── ANATOMY ───────────────────────────────────────────────────────────────────
+"anatomy": _BASE + """
+You are a world-class anatomist and surgical educator who connects structural knowledge
+to clinical medicine and surgery for examination and operative excellence.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 🗺️ OVERVIEW & LOCATION
+
+## 📍 BOUNDARIES & EXTENT
+All six sides / limits where applicable.
+
+## 🩸 BLOOD SUPPLY
+**Arterial:** Main vessel, key branches, clinically important variations
+**Venous:** Drainage pattern and clinical significance
+
+## 🧠 NERVE SUPPLY
+Motor and sensory components with clinical testing methods.
+
+## 🫀 LYMPHATIC DRAINAGE
+Primary and secondary nodal groups.
+
+## 🔗 IMPORTANT ANATOMICAL RELATIONS
+Clinically and surgically significant adjacent structures — and why they matter.
+
+## ⚕️ CLINICAL CORRELATIONS
+- Common injury mechanisms and presentations
+- Surgical approaches that rely on this anatomy
+- Examination findings arising from anatomical disruption
+
+## 🔑 SURGICAL & EXAM PEARLS
+High-yield facts every surgeon, examiner, and clinical student must know.
+""",
+
+# ── PROCEDURE ─────────────────────────────────────────────────────────────────
+"procedure": _BASE + """
+You are a world-class surgical educator and procedural skills trainer.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 🎯 PROCEDURE OVERVIEW
+What it is, its purpose, and when it is used.
+
+## ✅ INDICATIONS
+## 🚫 CONTRAINDICATIONS
+Absolute and relative, with reasoning.
+
+## 🛠️ EQUIPMENT & SET-UP
+Comprehensive list — nothing assumed.
+
+## 👥 CONSENT KEY POINTS & PATIENT PREPARATION
+Position, skin prep, anaesthesia type, sterile field setup.
+
+## 🔧 STEP-BY-STEP TECHNIQUE
+Numbered, precise, unambiguous. Distinguish technique variants where applicable.
+
+## ⚠️ COMMON MISTAKES & HOW TO AVOID THEM
+
+## 🚨 COMPLICATIONS
+| Timing | Complication | Recognition | Management |
+|--------|-------------|-------------|-----------|
+
+## 🔑 TECHNICAL PEARLS
+Tips from experienced operators that make the procedure safer and faster.
+""",
+
+# ── GENERAL CLINICAL ──────────────────────────────────────────────────────────
+"general_clinical": _BASE + """
+You are a world-class senior consultant physician and surgical educator with 25+ years
+of clinical experience across general medicine, surgery, and specialty practice.
+
+RESPONSE STRUCTURE (follow exactly):
+
+## 🎯 DIRECT ANSWER
+One clear sentence — state your answer immediately.
+
+## 🧬 PATHOPHYSIOLOGY
+Mechanism behind the condition.
+
+## 🩺 CLINICAL FEATURES
+History, examination findings, red flags.
+
+## 🔬 INVESTIGATIONS
+Bedside → Bloods → Imaging → Special. Include expected findings and interpretation tips.
+
+## 🔍 DIFFERENTIAL DIAGNOSIS
+| Rank | Diagnosis | Key Distinguishing Features |
+|------|-----------|----------------------------|
+
+## 🏥 MANAGEMENT
+**Immediate:**
+**Definitive:**
+**Surgical (if applicable):**
+
+## 💊 PHARMACOTHERAPY
+| Drug | Dose | Route | Frequency | Notes |
+|------|------|-------|-----------|-------|
+
+## ⚠️ COMPLICATIONS
+Early / Late / Life-threatening.
+
+## 👥 SPECIAL POPULATIONS
+Pregnancy, elderly, immunocompromised — modifications if relevant.
+
+## 📊 RELEVANT SCORING SYSTEMS
+
+## 🔑 CLINICAL PEARLS
+3–4 high-yield insights.
+
+## 📈 PROGNOSIS & FOLLOW-UP
+""",
 }
 
-# ── Mode-specific user prompt templates ──────────────────────
-_USER_TEMPLATES = {
-    "exam": """EXAM QUESTION:
-{question}
 
-REFERENCE MATERIAL:
-{context}
+# ═══════════════════════════════════════════════════════════════════════════════
+#  RESOURCE LOADING
+# ═══════════════════════════════════════════════════════════════════════════════
+@st.cache_resource(show_spinner=False)
+def load_resources():
+    embed  = SentenceTransformer(EMBED_MODEL)
+    qdrant = QdrantClient(
+        url     = os.environ["QDRANT_URL"],
+        api_key = os.environ.get("QDRANT_API_KEY", ""),
+    )
+    groq   = Groq(api_key=os.environ["GROQ_API_KEY"])
+    return embed, qdrant, groq
 
-Provide a complete exam-focused answer using ALL sections above.
-This candidate is preparing for USMLE Step 2/3, MRCS Part B, or FCPS. Give them everything they need.
-Include option elimination, the key rule, mnemonics, and exam traps. Be exhaustive.""",
-    "management": """MANAGEMENT QUESTION:
-{question}
+embed_model, qdrant_client, groq_client = load_resources()
 
-REFERENCE MATERIAL:
-{context}
 
-Provide a comprehensive, step-by-step management answer using ALL sections above.
-This is for a senior surgical trainee preparing for exams AND real-world practice.
-Do NOT skip any section. Do NOT truncate. Include exact priorities, investigations, doses, and monitoring.""",
-    "diagnosis": """DIAGNOSTIC QUESTION:
-{question}
-
-REFERENCE MATERIAL:
-{context}
-
-Provide a comprehensive diagnostic reasoning answer using ALL sections above.
-State the most likely diagnosis first, then explain the mechanism, differentials, investigations, and must-not-miss diagnoses.""",
-    "drug": """PHARMACOLOGY QUESTION:
-{question}
-
-REFERENCE MATERIAL:
-{context}
-
-Provide a complete drug/pharmacology answer using ALL sections above.
-Cover mechanism, indications, contraindications, dosing, adverse effects, interactions, toxicity, monitoring, and exam pearls.""",
-    "clinical": """CLINICAL QUESTION:
-{question}
-
-REFERENCE MATERIAL:
-{context}
-
-Provide a comprehensive, consultant-level answer covering ALL sections above.
-This is for a senior surgical trainee preparing for exams AND clinical practice.
-Do NOT skip any section. Do NOT truncate. Include real drug names and real doses.
-Be the world's best clinical consultant.""",
-}
-
-def build_user_prompt(mode: str, question: str, context: str) -> str:
-    template = _USER_TEMPLATES.get(mode, _USER_TEMPLATES["clinical"])
-    return template.format(question=question, context=context)
-
-# ══════════════════════════════════════════════════════════════════════
-# 5 · ENHANCED RAG ENGINE
-# ══════════════════════════════════════════════════════════════════════
-def retrieve_context(question: str, k: int = 14) -> str:
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ENHANCED RAG — RETRIEVE + DEDUPLICATE
+# ═══════════════════════════════════════════════════════════════════════════════
+def get_context(question: str, q_type: str) -> str:
     """
-    Enhanced retrieval:
-    - Larger k (14) for richer context
-    - Score threshold to filter weak matches
-    - Deduplication to avoid redundant passages
+    Enrich the query, retrieve top_k chunks from Qdrant,
+    deduplicate by leading-80-char fingerprint, and return formatted context.
     """
-    vec  = embed_model.encode(question).tolist()
+    enriched = enrich_query(question, q_type)
+    vec      = embed_model.encode(enriched).tolist()
+
     hits = qdrant_client.search(
-        collection_name=COLLECTION,
-        query_vector=vec,
-        limit=k,
-        score_threshold=0.32,   # filter out noise
+        collection_name = COLLECTION,
+        query_vector    = vec,
+        limit           = RAG_TOP_K,
+        score_threshold = SCORE_THRESH,
     )
 
     seen, parts = set(), []
-    for hit in hits:
-        txt = hit.payload.get("text", "").strip()
+    for h in hits:
+        txt = h.payload.get("text", "").strip()
         if not txt:
             continue
-        key = txt[:80]                  # deduplicate by leading 80 chars
-        if key in seen:
+        fp = re.sub(r"\s+", " ", txt[:80]).lower()
+        if fp in seen:
             continue
-        seen.add(key)
+        seen.add(fp)
         parts.append(txt)
 
-    if not parts:
-        return "No specific reference context available for this query."
-    return "\n\n---\n\n".join(parts)
+    return "\n\n---\n\n".join(parts) if parts else ""
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 6 · RESPONSE CLEANER
-# ══════════════════════════════════════════════════════════════════════
-_CLEAN_PATTERNS = [
-    # Remove source/context attributions
-    r"(?im)^sources?:.*$",
-    r"(?im)^references?:.*$",
-    r"(?im)\[source[^\]]*\]",
-    r"(?i)based on (the|my|this) (context|provided|reference|text|material|information)[,.]?\s*",
-    r"(?i)according to (the|my) (context|provided|reference|text|textbook)[,.]?\s*",
-    r"(?i)(as|as per) (mentioned|stated|described|noted) in (the|this) (context|reference|provided)[,.]?\s*",
-    r"(?i)from (the|this) (context|reference|provided material)[,.]?\s*",
-    r"(?i)the (context|provided material|reference) (states?|mentions?|indicates?)[,.]?\s*",
-    # Remove AI hedging
-    r"(?i)as an ai (language model|assistant|system)[,.]?\s*",
-    r"(?i)i (should note|must note|want to note) that[,.]?\s*",
-    r"(?i)please note that[,.]?\s*",
-    r"(?i)i('m| am) not a (doctor|physician|medical professional)[,.]?\s*",
-    r"(?i)this (is not|isn't) medical advice[,.]?\s*",
-    r"(?i)consult (a|your) (doctor|physician|healthcare)[^.]*[.]?\s*",
+# ═══════════════════════════════════════════════════════════════════════════════
+#  RESPONSE CLEANER
+# ═══════════════════════════════════════════════════════════════════════════════
+_CLEAN = [
+    (r"(?im)^sources?:.*$",                                        ""),
+    (r"(?im)^references?:.*$",                                     ""),
+    (r"(?i)\bbased on (the )?(context|reference|textbook|retrieval)\b[,.]?\s*", ""),
+    (r"(?i)\baccording to (the )?(context|reference|textbook)\b[,.]?\s*",       ""),
+    (r"(?i)\bthe (provided )?(context|reference[s]?)\b",           ""),
+    (r"\n{3,}",                                                    "\n\n"),
 ]
-
 def clean_response(text: str) -> str:
-    for pat in _CLEAN_PATTERNS:
-        text = re.sub(pat, "", text, flags=re.MULTILINE)
-    text = re.sub(r"\n{3,}", "\n\n", text)   # max 2 consecutive blank lines
+    for pattern, repl in _CLEAN:
+        text = re.sub(pattern, repl, text)
     return text.strip()
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 7 · AI RESPONSE ENGINE
-# ══════════════════════════════════════════════════════════════════════
-def ask_ai(question: str, history: list) -> tuple:
-    """
-    Returns (stream, mode_key).
-    Temperature 0.15 — maximises factual accuracy, minimises hallucination.
-    max_tokens 4096  — allows fully complete structured answers.
-    """
-    mode    = classify_query(question)
-    context = retrieve_context(question, k=14)
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AI ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+def ask_ai(question: str, history: list, q_type: str):
+    """Retrieve context, select specialist prompt, stream response."""
+    context    = get_context(question, q_type)
+    sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
 
-    messages = [{"role": "system", "content": PROMPTS[mode]}]
+    messages = [{"role": "system", "content": sys_prompt}]
 
-    # Rolling history window — last 6 exchanges for context continuity
-    for h in history[-6:]:
-        messages.append({"role": "user",      "content": h["q"]})
-        messages.append({"role": "assistant", "content": h["a"]})
+    # Include recent conversation history for multi-turn context
+    for h in history[-HISTORY_TURNS:]:
+        messages += [
+            {"role": "user",      "content": h["q"]},
+            {"role": "assistant", "content": h["a"]},
+        ]
 
+    ctx_block = f"\n\nREFERENCE CONTEXT:\n{context}" if context else ""
     messages.append({
-        "role":    "user",
-        "content": build_user_prompt(mode, question, context),
+        "role": "user",
+        "content": (
+            f"CLINICAL QUESTION:\n{question}{ctx_block}\n\n"
+            "Provide a comprehensive, consultant-level answer following the exact structure "
+            "specified in your system instructions. Be exhaustive — never truncate. "
+            "This is for a senior surgical/medical trainee preparing for postgraduate "
+            "examinations and real-world clinical practice."
+        ),
     })
 
-    stream = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        temperature=0.15,   # low = factual, consistent, accurate
-        max_tokens=4096,    # full structured answers, no truncation
-        stream=True,
+    return groq_client.chat.completions.create(
+        model       = GROQ_MODEL,
+        messages    = messages,
+        temperature = TEMPERATURE,
+        max_tokens  = MAX_TOKENS,
+        stream      = True,
     )
 
-    return stream, mode
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SESSION STATE
+# ═══════════════════════════════════════════════════════════════════════════════
+if "messages" not in st.session_state: st.session_state.messages = []
+if "history"  not in st.session_state: st.session_state.history  = []
+if "prefill"  not in st.session_state: st.session_state.prefill  = None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 8 · SESSION STATE INITIALISATION
-# ══════════════════════════════════════════════════════════════════════
-for _key, _default in [
-    ("messages",  []),
-    ("history",   []),
-    ("prefill",   None),
-    ("last_mode", None),
-]:
-    if _key not in st.session_state:
-        st.session_state[_key] = _default
-
-
-# ══════════════════════════════════════════════════════════════════════
-# 9 · SIDEBAR
-# ══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SIDEBAR
+# ═══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### 🏥 MedConsult AI")
-    st.caption("Clinical Intelligence Engine v3.0")
+    st.markdown("### 🩺 MedConsult AI v3.0")
+    st.markdown(f"**Questions answered:** {len(st.session_state.history)}")
     st.divider()
-
-    st.markdown("**🎛️ Active Modes**")
-    for mk, mc in MODE_META.items():
-        st.markdown(
-            f"<span class='qmode {mc['css']}' style='font-size:.75rem'>"
-            f"{mc['icon']} {mc['label']}</span>",
-            unsafe_allow_html=True,
-        )
-
-    st.divider()
-    st.markdown("**⚡ Quick-Access Topics**")
-
-    QUICK_TOPICS = [
-        ("📝", "What is the next step in a patient with obstructive jaundice?"),
-        ("📝", "USMLE: Most common cause of secondary hypertension?"),
-        ("🏥", "Acute appendicitis management protocol"),
-        ("🏥", "Septic shock — Surviving Sepsis Bundle"),
-        ("🏥", "Bowel obstruction: conservative vs surgical management"),
-        ("🔬", "Painless jaundice — differential diagnosis"),
-        ("🔬", "Breast lump workup algorithm"),
-        ("💊", "Heparin vs warfarin: mechanism, dosing, reversal"),
-        ("💊", "Antibiotics for surgical prophylaxis and infections"),
-        ("🩺", "ATLS trauma primary survey"),
-        ("🩺", "DIC — diagnosis and management"),
-        ("🩺", "Upper GI bleed — Rockall score and management"),
-    ]
-
-    for icon, topic in QUICK_TOPICS:
-        short = topic[:38] + "…" if len(topic) > 38 else topic
-        if st.button(f"{icon} {short}", key=f"qt_{topic[:25]}", use_container_width=True):
-            st.session_state.prefill = topic
-
-    st.divider()
-    col_a, col_b = st.columns(2)
-    if col_a.button("🗑️ Clear", use_container_width=True):
-        st.session_state.messages  = []
-        st.session_state.history   = []
-        st.session_state.last_mode = None
+    if st.button("🗑️ Clear Conversation", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.history  = []
         st.rerun()
-
+    st.divider()
+    st.markdown("""
+**Auto-detected question types:**
+- 🎯 Exam MCQ
+- 🏥 Clinical Case
+- 📋 Management Protocol
+- 🧬 Pathophysiology
+- 💊 Pharmacology
+- 📊 Investigation Interpretation
+- 🗺️ Anatomy
+- 🔧 Procedure
+- 🩺 General Clinical
+""")
     st.divider()
     st.markdown(
-        "<div style='font-size:.73rem;color:#94a3b8;text-align:center;line-height:1.6'>"
-        "LLaMA 3.3 70B · RAG · 5-Mode Engine<br>"
-        "⚕️ For exam prep & clinical practice"
-        "</div>",
+        "<small>🔋 LLaMA 3.3 70B · Qdrant Vector DB · Sentence-Transformers</small>",
         unsafe_allow_html=True,
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 10 · HEADER
-# ══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HEADER
+# ═══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div class="app-header">
-    <div class="header-title">🏥 MedConsult AI</div>
-    <div class="header-sub">World-class clinical intelligence — exams, management, diagnosis, pharmacology</div>
-    <div class="mode-badges">
-        <span class="mode-badge"><div class="pulse"></div>&nbsp;Online</span>
-        <span class="mode-badge">📝 Exam Engine</span>
-        <span class="mode-badge">🏥 Management</span>
-        <span class="mode-badge">🔬 Diagnosis</span>
-        <span class="mode-badge">💊 Pharmacology</span>
+<div class="med-header">
+    <div class="logo">🩺 Med<span>Consult</span> AI</div>
+    <div class="live-badge">
+        <div class="pulse-dot"></div>
+        Elite Clinical Intelligence Active
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 11 · MESSAGE RENDERER
-# ══════════════════════════════════════════════════════════════════════
-def render_message(role: str, content: str, mode: str = None) -> None:
-    avatar = "🧑‍⚕️" if role == "user" else "🤖"
-    with st.chat_message(role, avatar=avatar):
-        if role == "assistant" and mode and mode in MODE_META:
-            mc = MODE_META[mode]
-            st.markdown(
-                f"<span class='qmode {mc['css']}'>{mc['icon']} {mc['label']}</span>",
-                unsafe_allow_html=True,
-            )
-        if role == "user":
-            st.markdown(html_escape(content))
-        else:
-            st.markdown(content)
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CHAT AREA
+# ═══════════════════════════════════════════════════════════════════════════════
+st.markdown('<div class="chat-wrap">', unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════
-# 12 · WELCOME SCREEN
-# ══════════════════════════════════════════════════════════════════════
+# ── Welcome screen ────────────────────────────────────────────────────────────
 if not st.session_state.messages:
     st.markdown("""
-    <div class="welcome">
-        <h2>Ask any clinical or exam question</h2>
+    <div class="welcome-card">
+        <h2>🩺 Elite Clinical Intelligence</h2>
         <p>
-            Get exhaustive, consultant-level answers structured for
-            <strong>high-stakes exams</strong> (USMLE · MRCS · FCPS · MRCP)
-            and <strong>real-world patient management</strong>.
-            Auto-detects your question type and uses the optimal response format.
+            Ask any clinical question and receive comprehensive, consultant-grade answers
+            optimised for <strong>postgraduate examinations</strong> and
+            <strong>real-world clinical practice</strong>.<br><br>
+            The AI automatically detects your question type and applies the
+            optimal specialist response structure.
         </p>
+        <div class="chip-row">
+            <span class="chip">🎯 Exam MCQs</span>
+            <span class="chip">🏥 Clinical Cases</span>
+            <span class="chip">📋 Management Plans</span>
+            <span class="chip">🧬 Pathophysiology</span>
+            <span class="chip">💊 Drug Doses</span>
+            <span class="chip">📊 Investigation Interpretation</span>
+            <span class="chip">🗺️ Anatomy</span>
+            <span class="chip">🔧 Procedures</span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    SAMPLE_QS = [
-        ("📝", "Acute appendicitis: classic MCQ approach"),
-        ("🏥", "Septic shock: management protocol"),
-        ("🔬", "Painless jaundice: differential diagnosis"),
-        ("💊", "Heparin vs warfarin comparison"),
-        ("📝", "Most likely cause of right iliac fossa pain?"),
-        ("🏥", "Upper GI bleed: immediate management"),
-        ("🔬", "Thyroid nodule: investigation algorithm"),
-        ("💊", "Metronidazole: pharmacology and uses"),
-    ]
 
-    cols = st.columns(2)
-    for i, (icon, q) in enumerate(SAMPLE_QS):
-        if cols[i % 2].button(f"{icon} {q}", key=f"sq_{i}", use_container_width=True):
-            st.session_state.prefill = q
+# ── Render a message ──────────────────────────────────────────────────────────
+def render_message(role: str, content: str, q_type: str = None) -> None:
+    with st.chat_message(role):
+        if role == "assistant" and q_type:
+            label, css_class = _QTYPE_LABELS.get(q_type, ("🩺 CLINICAL", "qtype-general"))
+            st.markdown(
+                f'<span class="qtype-badge {css_class}">{label}</span>',
+                unsafe_allow_html=True,
+            )
+        st.markdown(content)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 13 · RENDER EXISTING MESSAGES
-# ══════════════════════════════════════════════════════════════════════
+# ── Render conversation history ───────────────────────────────────────────────
 for msg in st.session_state.messages:
-    render_message(msg["role"], msg["content"], mode=msg.get("mode"))
+    render_message(msg["role"], msg["content"], msg.get("q_type"))
+
+st.markdown("</div>", unsafe_allow_html=True)  # close .chat-wrap
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 14 · CHAT INPUT
-# ══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CHAT INPUT
+# ═══════════════════════════════════════════════════════════════════════════════
 prompt = st.chat_input(
-    "Ask anything — exam MCQ, clinical case, management protocol, pharmacology…",
-    key="main_input",
+    "Ask anything clinical — exam MCQs, cases, management, pharmacology, anatomy, interpretation…"
 )
-
-# Handle sidebar quick-topic or welcome-screen prefill
 if st.session_state.prefill:
     prompt = st.session_state.prefill
     st.session_state.prefill = None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# 15 · HANDLE NEW QUESTION
-# ══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HANDLE NEW QUESTION
+# ═══════════════════════════════════════════════════════════════════════════════
 if prompt:
-    # ── Render & save user message ──
+    q_type = classify_question(prompt)
+    label, badge_class = _QTYPE_LABELS[q_type]
+
+    # Render user message
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # ── Thinking indicator ──
+    # Thinking indicator
     thinking = st.empty()
-    thinking.markdown("""
+    thinking.markdown(f"""
     <div class="thinking">
         <div style="display:flex;gap:5px">
-            <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
         </div>
-        <div>Analysing clinical data and generating expert response…</div>
+        <div>Generating {label} response…</div>
     </div>""", unsafe_allow_html=True)
 
-    # ── Get AI stream + detected mode ──
-    stream, mode = ask_ai(prompt, st.session_state.history)
+    # Stream response
+    try:
+        stream = ask_ai(prompt, st.session_state.history, q_type)
+    except Exception as e:
+        thinking.empty()
+        st.error(f"⚠️ API error: {e}")
+        st.stop()
+
     thinking.empty()
+    full_response = ""
 
-    # ── Stream tokens to screen ──
-    placeholder    = st.empty()
-    full_response  = ""
-    for chunk in stream:
-        token = chunk.choices[0].delta.content or ""
-        full_response += token
-        placeholder.markdown(full_response + "▌")
+    with st.chat_message("assistant"):
+        st.markdown(
+            f'<span class="qtype-badge {badge_class}">{label}</span>',
+            unsafe_allow_html=True,
+        )
+        stream_box = st.empty()
+        for chunk in stream:
+            token          = chunk.choices[0].delta.content or ""
+            full_response += token
+            stream_box.markdown(full_response + "▌")
+        final = clean_response(full_response)
+        stream_box.markdown(final)
 
-    placeholder.empty()
-    full_response = clean_response(full_response)
-
-    # ── Render final response with mode badge ──
-    render_message("assistant", full_response, mode=mode)
-
-    # ── Persist to session state ──
+    # Persist to session
     st.session_state.messages.append({
         "role":    "assistant",
-        "content": full_response,
-        "mode":    mode,
+        "content": final,
+        "q_type":  q_type,
     })
-    st.session_state.history.append({
-        "q": prompt,
-        "a": full_response,
-    })
-    st.session_state.last_mode = mode
+    st.session_state.history.append({"q": prompt, "a": final})
