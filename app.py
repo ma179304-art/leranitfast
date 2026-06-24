@@ -17,9 +17,22 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CONSTANTS — adjust to your deployment ─────────────────────────────────────
-COLLECTION    = os.getenv("QDRANT_COLLECTION",  "medical_textbooks")
-EMBED_MODEL   = os.getenv("EMBED_MODEL",        "sentence-transformers/all-MiniLM-L6-v2")
+# ── CREDENTIALS ───────────────────────────────────────────────────────────────
+# Priority: st.secrets → environment variable → hardcoded fallback
+def _secret(key: str, fallback: str = "") -> str:
+    """Resolve a secret from Streamlit secrets, env var, or hardcoded fallback."""
+    try:
+        return st.secrets[key]          # Streamlit Cloud / secrets.toml
+    except Exception:
+        return os.getenv(key, fallback) # local env var or hardcoded default
+
+QDRANT_URL     = _secret("QDRANT_URL",     "https://de37508d-69ee-4ee0-a1dc-96f816de749e.eu-west-1-0.aws.cloud.qdrant.io")
+QDRANT_API_KEY = _secret("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6Njc4YzI3NGMtMDU4ZS00NmVlLWIyODYtZmU5NjI0ZjRmYTQ2In0.ky3cKacAntlW16iRKu4NzhhxgslzyYsPrnoe3wE0Heo")
+GROQ_API_KEY   = _secret("GROQ_API_KEY",   "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")
+
+# ── CONSTANTS ──────────────────────────────────────────────────────────────────
+COLLECTION    = _secret("QDRANT_COLLECTION", "medical_textbooks")
+EMBED_MODEL   = _secret("EMBED_MODEL",       "sentence-transformers/all-MiniLM-L6-v2")
 GROQ_MODEL    = "llama-3.3-70b-versatile"
 RAG_TOP_K     = 10        # retrieve more chunks → richer context
 MAX_TOKENS    = 4096      # longer, comprehensive answers
@@ -632,10 +645,10 @@ Pregnancy, elderly, immunocompromised — modifications if relevant.
 def load_resources():
     embed  = SentenceTransformer(EMBED_MODEL)
     qdrant = QdrantClient(
-        url     = os.environ["QDRANT_URL"],
-        api_key = os.environ.get("QDRANT_API_KEY", ""),
+        url     = QDRANT_URL,
+        api_key = QDRANT_API_KEY,
     )
-    groq   = Groq(api_key=os.environ["GROQ_API_KEY"])
+    groq   = Groq(api_key=GROQ_API_KEY)
     return embed, qdrant, groq
 
 embed_model, qdrant_client, groq_client = load_resources()
