@@ -31,7 +31,7 @@ QDRANT_API_KEY = _secret("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
 GROQ_API_KEY   = _secret("GROQ_API_KEY",   "")
 
 # ── CONSTANTS ──────────────────────────────────────────────────────────────────
-COLLECTION    = _secret("QDRANT_COLLECTION", "medical_textbooks")
+COLLECTION    = _secret("QDRANT_COLLECTION", "medical_books")
 EMBED_MODEL   = _secret("EMBED_MODEL",       "sentence-transformers/all-MiniLM-L6-v2")
 GROQ_MODEL    = "llama-3.3-70b-versatile"
 RAG_TOP_K     = 10        # retrieve more chunks → richer context
