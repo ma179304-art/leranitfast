@@ -26,13 +26,8 @@ def _secret(key: str, fallback: str = "") -> str:
     except Exception:
         return os.getenv(key, fallback) # local env var or hardcoded default
 
-QDRANT_URL     = _secret("QDRANT_URL",     "")
-QDRANT_API_KEY = _secret("QDRANT_API_KEY", "")
-GROQ_API_KEY   = _secret("GROQ_API_KEY",   "")
-
-# ── CONSTANTS ──────────────────────────────────────────────────────────────────
-COLLECTION    = _secret("QDRANT_COLLECTION", "medical_books")
-EMBED_MODEL   = _secret("EMBED_MODEL",       "sentence-transformers/all-MiniLM-L6-v2")
+COLLECTION    = "medical_books"
+EMBED_MODEL   = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL    = "llama-3.3-70b-versatile"
 RAG_TOP_K     = 10        # retrieve more chunks → richer context
 MAX_TOKENS    = 4096      # longer, comprehensive answers
@@ -643,12 +638,14 @@ Pregnancy, elderly, immunocompromised — modifications if relevant.
 # ═══════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner=False)
 def load_resources():
+    # Read secrets HERE — st.secrets is fully ready at this point
+    qdrant_url     = st.secrets.get("QDRANT_URL",     os.getenv("QDRANT_URL",     ""))
+    qdrant_api_key = st.secrets.get("QDRANT_API_KEY", os.getenv("QDRANT_API_KEY", ""))
+    groq_api_key   = st.secrets.get("GROQ_API_KEY",   os.getenv("GROQ_API_KEY",   ""))
+
     embed  = SentenceTransformer(EMBED_MODEL)
-    qdrant = QdrantClient(
-        url     = QDRANT_URL,
-        api_key = QDRANT_API_KEY,
-    )
-    groq   = Groq(api_key=GROQ_API_KEY)
+    qdrant = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    groq   = Groq(api_key=groq_api_key)
     return embed, qdrant, groq
 
 embed_model, qdrant_client, groq_client = load_resources()
