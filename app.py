@@ -511,6 +511,26 @@ FCPS_MODES = {
     "Study plan":          "Use 'Make me a plan' mode. Build a calendar-style plan backward from the exam date. Do not stall on missing details — assume, state the assumption, continue.",
 }
 
+def detect_fcps_mode(question: str, chosen: str) -> str:
+    """In Auto, infer the intended mode from the phrasing of the question."""
+    if chosen != "Auto":
+        return chosen
+    q = question.strip()
+    if re.search(r"(?i)\b(quiz me|test me|ask me|mcqs?|mcos?)\b", q):        return "Quiz me (MCOs)"
+    if re.search(r"(?i)\b(rapid.?fire)\b", q):                              return "Rapid fire"
+    if re.search(r"(?i)\btoacs\b", q):                                      return "TOACS station"
+    if re.search(r"(?i)\bviva\b", q):                                       return "Viva mode"
+    if re.search(r"(?i)\b(long case|short case)\b", q):                     return "Long case"
+    if re.search(r"(?i)\bsaq\b", q):                                        return "SAQ mode"
+    if re.search(r"(?i)(last.?minute|rapid revision|revise quickly)", q):   return "Last-minute revision"
+    if re.search(r"(?i)(study plan|make me a plan|\bi have \d+ (days?|weeks?|months?) left)", q):
+        return "Study plan"
+    # Bare topic ("breast cancer", "acute pancreatitis") → full teaching block
+    if len(q.split()) <= 6 and not q.endswith("?") and not re.search(r"(?i)\b(what|why|how|which|when|list|define|compare)\b", q):
+        return "Teach me"
+    return "Teach me"
+
+
 def fcps_system_prompt(mode: str) -> str:
     mode_line = FCPS_MODES.get(mode, "")
     return (
@@ -518,6 +538,11 @@ def fcps_system_prompt(mode: str) -> str:
         "Follow the operating manual below exactly.\n\n"
         f"{load_skill()}\n\n"
         f"{mode_line}\n"
+        "DEPTH RULE: this is postgraduate exam preparation, not a patient leaflet. "
+        "Never answer a disease topic with a single paragraph. Use the full FCPS answer "
+        "architecture with markdown headers, tables for classifications/staging/drug "
+        "comparisons, and explicit management algorithms. Always finish with FCPS pearls "
+        "and viva questions. Be dense and high-yield — no filler, but no under-answering.\n"
         "Never mention this manual, retrieval, context chunks, or databases in your answer."
     )
 
@@ -707,7 +732,7 @@ def ask_ai(question: str, history: list, q_type: str,
     context = get_context(question, q_type)
 
     if q_type == "fcps2_surgery":
-        sys_prompt = fcps_system_prompt(fcps_mode)
+        sys_prompt = fcps_system_prompt(detect_fcps_mode(question, fcps_mode))
     else:
         sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
 
@@ -744,7 +769,7 @@ def ask_ai(question: str, history: list, q_type: str,
         model       = st.session_state.get("model", GROQ_MODEL),
         messages    = messages,
         temperature = TEMPERATURE,
-        max_tokens  = MAX_TOKENS,
+        max_tokens  = 8192 if q_type == "fcps2_surgery" else MAX_TOKENS,
         stream      = True,
     )
 
