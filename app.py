@@ -30,7 +30,15 @@ def _secret(key: str, fallback: str = "") -> str:
 
 COLLECTION    = "medical_books"
 EMBED_MODEL   = "sentence-transformers/all-MiniLM-L6-v2"
-GROQ_MODEL    = "llama-3.3-70b-versatile"
+# llama-3.3-70b-versatile was deprecated by Groq (announced 2026-06-17).
+# Preference order — the first one actually available on the account wins.
+GROQ_MODEL_CHAIN = [
+    "openai/gpt-oss-120b",      # recommended replacement for llama-3.3-70b
+    "qwen/qwen3.6-27b",         # multimodal alternative
+    "moonshotai/kimi-k2-instruct-0905",
+    "openai/gpt-oss-20b",       # smaller/faster fallback
+]
+GROQ_MODEL    = GROQ_MODEL_CHAIN[0]   # overridden at runtime by resolve_model()
 RAG_TOP_K     = 10        # retrieve more chunks → richer context
 MAX_TOKENS    = 4096      # longer, comprehensive answers
 TEMPERATURE   = 0.20      # factual & consistent
@@ -616,6 +624,29 @@ embed_model, qdrant_client, groq_client = load_resources()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  MODEL RESOLUTION — pick the first model in the chain the account can actually use
+# ═══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=3600, show_spinner=False)
+def available_models() -> list:
+    """Live list of chat models on this Groq account."""
+    try:
+        ids = [m.id for m in groq_client.models.list().data]
+    except Exception:
+        return []
+    skip = ("whisper", "tts", "guard", "orpheus", "embed")
+    return sorted(i for i in ids if not any(s in i.lower() for s in skip))
+
+def resolve_model() -> str:
+    models = available_models()
+    if not models:
+        return GROQ_MODEL_CHAIN[0]          # API unreachable — try the default
+    for candidate in GROQ_MODEL_CHAIN:
+        if candidate in models:
+            return candidate
+    return models[0]                        # nothing from the chain — use anything usable
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  ENHANCED RAG — RETRIEVE + DEDUPLICATE
 # ═══════════════════════════════════════════════════════════════════════════════
 def get_context(question: str, q_type: str) -> str:
@@ -710,7 +741,7 @@ def ask_ai(question: str, history: list, q_type: str,
     })
 
     return groq_client.chat.completions.create(
-        model       = GROQ_MODEL,
+        model       = st.session_state.get("model", GROQ_MODEL),
         messages    = messages,
         temperature = TEMPERATURE,
         max_tokens  = MAX_TOKENS,
@@ -728,6 +759,7 @@ if "web_on"   not in st.session_state: st.session_state.web_on   = False
 if "web_med"  not in st.session_state: st.session_state.web_med  = True
 if "fcps_on"  not in st.session_state: st.session_state.fcps_on  = False
 if "fcps_mode" not in st.session_state: st.session_state.fcps_mode = "Auto"
+if "model"    not in st.session_state: st.session_state.model    = resolve_model()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -736,6 +768,18 @@ if "fcps_mode" not in st.session_state: st.session_state.fcps_mode = "Auto"
 with st.sidebar:
     st.markdown("### 🩺 MedConsult AI v3.0")
     st.markdown(f"**Questions answered:** {len(st.session_state.history)}")
+    st.divider()
+
+    # ── Model ─────────────────────────────────────────────────────────────────
+    st.markdown("#### 🧠 Model")
+    _models = available_models()
+    if _models:
+        _idx = _models.index(st.session_state.model) if st.session_state.model in _models else 0
+        st.session_state.model = st.selectbox("Active model", _models, index=_idx)
+    else:
+        st.caption("⚠️ Couldn't reach the Groq model list — check GROQ_API_KEY.")
+        st.session_state.model = st.text_input("Active model", value=st.session_state.model)
+
     st.divider()
 
     # ── Internet search ───────────────────────────────────────────────────────
@@ -785,7 +829,7 @@ with st.sidebar:
 """)
     st.divider()
     st.markdown(
-        "<small>🔋 LLaMA 3.3 70B · Qdrant Vector DB · Sentence-Transformers</small>",
+        f"<small>🔋 {st.session_state.model} · Qdrant Vector DB · Sentence-Transformers</small>",
         unsafe_allow_html=True,
     )
 
@@ -920,7 +964,16 @@ if prompt:
         )
     except Exception as e:
         thinking.empty()
-        st.error(f"⚠️ API error: {e}")
+        msg = str(e)
+        if "model_not_found" in msg or "decommissioned" in msg or "does not exist" in msg:
+            st.error(
+                f"⚠️ Model `{st.session_state.model}` isn't available on this account. "
+                "Pick another from the sidebar — Groq retires models periodically "
+                "(see console.groq.com/docs/deprecations)."
+            )
+            available_models.clear()   # drop the cache so the list refreshes
+        else:
+            st.error(f"⚠️ API error: {e}")
         st.stop()
 
     thinking.empty()
