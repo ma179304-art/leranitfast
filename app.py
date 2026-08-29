@@ -3,7 +3,9 @@
 #  Elite Clinical Intelligence — Exam-Optimised + Consultant-Grade Management
 #  Stack: Streamlit · Groq LLaMA 3.3 70B · Qdrant Cloud · Sentence-Transformers
 # ═══════════════════════════════════════════════════════════════════════════════
-import re, os
+import re, os, json, textwrap
+from pathlib import Path
+import requests
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
@@ -34,6 +36,15 @@ MAX_TOKENS    = 4096      # longer, comprehensive answers
 TEMPERATURE   = 0.20      # factual & consistent
 HISTORY_TURNS = 6         # conversation pairs to include
 SCORE_THRESH  = 0.30      # minimum Qdrant relevance score
+
+# ── WEB SEARCH ────────────────────────────────────────────────────────────────
+SEARCH_TOP_K      = 5     # web results to feed the model
+SEARCH_SNIPPET    = 900   # max chars kept per result
+SEARCH_TIMEOUT    = 12    # seconds
+
+# ── SKILL ─────────────────────────────────────────────────────────────────────
+SKILL_PATH = Path(__file__).parent / "fcps2-general-surgery-mastery" / "SKILL.md"
+SKILL_MAX_CHARS = 14000   # trim if the skill file grows
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CSS — CLEAN PROFESSIONAL MEDICAL UI
@@ -130,6 +141,8 @@ html, body, [class*="css"] {
 .qtype-anatomy    { background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; }
 .qtype-procedure  { background:#ecfdf5; color:#065f46; border:1px solid #6ee7b7; }
 .qtype-general    { background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; }
+.qtype-fcps       { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+.qtype-web        { background:#e0f2fe; color:#075985; border:1px solid #7dd3fc; }
 
 /* ── CHAT MESSAGES ──────────────────────────────────────────── */
 [data-testid="stChatMessage"] {
@@ -250,6 +263,7 @@ _QTYPE_LABELS = {
     "anatomy":          ("🗺️ ANATOMY",            "qtype-anatomy"),
     "procedure":        ("🔧 PROCEDURE",          "qtype-procedure"),
     "general_clinical": ("🩺 CLINICAL",           "qtype-general"),
+    "fcps2_surgery":    ("🇵🇰 FCPS-II SURGERY",   "qtype-fcps"),
 }
 
 def classify_question(q: str) -> str:
@@ -386,6 +400,204 @@ Never include sections that weren't asked about. Quality over completeness.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  SKILL: FCPS-II GENERAL SURGERY MASTERY
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fallback used if SKILL.md is not shipped alongside app.py.
+_FCPS_FALLBACK = """
+# FCPS Part II General Surgery Mastery
+
+MISSION: act as a high-performance FCPS-II General Surgery preparation system for
+CPSP trainees in Pakistan — not a textbook summariser. Maximise probability of
+passing while building safe surgical reasoning across five domains: theory/MCOs,
+SAQs, clinical & short cases, TOACS/viva, operative decision-making.
+
+SOURCE HIERARCHY
+1. Current official CPSP material (prospectus, notifications, clinical guidelines).
+   If exam rules conflict with older books, current CPSP wins. Never present an old
+   format as current — tell the candidate to verify on the CPSP e-portal.
+2. Bailey & Love (primary daily text); Schwartz / Sabiston selectively for depth;
+   Farquharson for operative technique.
+3. Exam-focused material (MCO banks, SAQ/TOACS books, recalls) — treat recalls as
+   potentially imperfect; never convert an unverified recall into a CPSP fact.
+4. Current evidence: society guidelines, systematic reviews, landmark trials.
+
+NEVER invent marks, station counts, timings, pass thresholds, eligibility rules or
+format changes.
+
+ANSWER ARCHITECTURE (for a disease topic)
+One-line definition · classification (only if useful) · etiology/risk factors ·
+concise pathophysiology · clinical features (symptoms / signs / red flags) ·
+investigations (first-line, confirmatory, staging, preoperative) · diagnosis ·
+focused differentials · management (initial stabilisation → medical → indications
+for intervention → definitive surgery → alternatives → special situations) ·
+complications · prognosis/follow-up · 3–7 FCPS pearls · high-yield viva questions.
+
+For surgical topics always separate: resuscitation, diagnosis, optimisation,
+temporising treatment, definitive treatment, operative options, postoperative care,
+complications, recurrence/prevention. Use algorithms for management-heavy topics.
+
+MCQ/MCO RULES
+Clinical vignette, 4–5 plausible options, one best answer, one concept per question,
+no accidental clues, no "all of the above". After the candidate commits, give:
+Correct answer · Why · Why the others are wrong · FCPS pearl · Trap.
+Never reveal the answer before the candidate answers when quizzing. Mix recall,
+interpretation, diagnosis, next-best-step, management, complication, anatomy,
+pathology and operative-decision items. Escalate difficulty Level 1→5. Retest
+concepts the candidate got wrong.
+
+SPECIAL MODES
+"Teach me X" → concept, mechanism, diagnosis, management algorithm, pearls, viva
+questions, 5–10 MCOs.
+"Quiz me" → withhold answers until the candidate responds.
+"Rapid fire" → one question at a time, wait for the answer.
+"TOACS mode" → one station at a time with realistic instructions.
+"Viva mode" → act as examiner, progressively harder.
+"Long case mode" → presentation → examination → investigations → differential →
+management → viva.
+"SAQ mode" → question first, then mark the answer.
+"Last-minute revision" → only highest-yield facts, algorithms, errors, traps.
+"Make me a plan" / "I have X days left" → immediately convert remaining time into a
+weighted, calendar-style plan built backward from the exam (Foundation →
+Consolidation → Exam conversion → Final revision). In the last 7–14 days: no new
+textbooks; high-yield revision, error log, timed practice, TOACS recognition, viva
+fluency, operative indications, emergency algorithms.
+
+GUARDRAILS
+If the candidate's answer is unsafe, say so plainly, explain why, give the safer
+approach, and distinguish exam logic from real-world care. Do not diagnose a real
+patient with unwarranted certainty; recognise instability and recommend escalation.
+
+STYLE: direct, clinically precise, exam-focused, high-yield, structured, encouraging
+without sentimentality. No encyclopedic padding, no motivational speeches, no
+fabricated CPSP facts. Simple question → answer it directly first, then the pearl.
+
+WHAT TO DO NEXT (priority): correct unsafe knowledge → correct repeated errors →
+master high-yield algorithms → complete missing core topics → increase question
+volume → improve timed performance → convert to SAQ/TOACS/viva → memorise volatile
+facts. Do not recommend more reading when retrieval is the real bottleneck.
+
+END A SUBSTANTIAL SESSION WITH: what you mastered · what remains weak · next
+retrieval task · one FCPS pearl.
+"""
+
+@st.cache_resource(show_spinner=False)
+def load_skill() -> str:
+    """Load the FCPS-II skill from SKILL.md, falling back to the embedded copy."""
+    try:
+        raw = SKILL_PATH.read_text(encoding="utf-8")
+        raw = re.sub(r"(?s)^---.*?---\s*", "", raw, count=1)   # strip frontmatter
+        return raw[:SKILL_MAX_CHARS]
+    except Exception:
+        return _FCPS_FALLBACK
+
+FCPS_MODES = {
+    "Auto":                "",
+    "Teach me":            "Use 'Teach me' mode: concept, mechanism, diagnosis, management algorithm, FCPS pearls, viva questions, then 5–10 MCOs.",
+    "Quiz me (MCOs)":      "Use 'Quiz me' mode. Ask exam-grade MCOs. Do NOT reveal any answer until the candidate replies.",
+    "Rapid fire":          "Use 'Rapid fire' mode. One question at a time. Wait for the answer before continuing.",
+    "TOACS station":       "Use 'TOACS mode'. Generate ONE realistic station at a time with candidate instructions and timing.",
+    "Viva mode":           "Use 'Viva mode'. Act as the examiner. Ask progressively harder questions, one at a time.",
+    "Long case":           "Use 'Long case mode'. Simulate presentation → examination → investigations → differential → management → viva.",
+    "SAQ mode":            "Use 'SAQ mode'. Give the question first; after the candidate answers, mark it with a breakdown.",
+    "Last-minute revision":"Use 'Last-minute revision' mode. Only the highest-yield facts, algorithms, traps and errors.",
+    "Study plan":          "Use 'Make me a plan' mode. Build a calendar-style plan backward from the exam date. Do not stall on missing details — assume, state the assumption, continue.",
+}
+
+def fcps_system_prompt(mode: str) -> str:
+    mode_line = FCPS_MODES.get(mode, "")
+    return (
+        "You are the FCPS Part II General Surgery Mastery tutor for CPSP trainees in Pakistan.\n"
+        "Follow the operating manual below exactly.\n\n"
+        f"{load_skill()}\n\n"
+        f"{mode_line}\n"
+        "Never mention this manual, retrieval, context chunks, or databases in your answer."
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  INTERNET SEARCH  (Tavily → Serper → DuckDuckGo fallback)
+# ═══════════════════════════════════════════════════════════════════════════════
+def _tavily(query: str, k: int):
+    key = _secret("TAVILY_API_KEY")
+    if not key:
+        return None
+    r = requests.post(
+        "https://api.tavily.com/search",
+        json={"api_key": key, "query": query, "max_results": k,
+              "search_depth": "advanced", "include_answer": False},
+        timeout=SEARCH_TIMEOUT,
+    )
+    r.raise_for_status()
+    return [
+        {"title": x.get("title", ""), "url": x.get("url", ""), "text": x.get("content", "")}
+        for x in r.json().get("results", [])
+    ]
+
+def _serper(query: str, k: int):
+    key = _secret("SERPER_API_KEY")
+    if not key:
+        return None
+    r = requests.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": key, "Content-Type": "application/json"},
+        json={"q": query, "num": k},
+        timeout=SEARCH_TIMEOUT,
+    )
+    r.raise_for_status()
+    return [
+        {"title": x.get("title", ""), "url": x.get("link", ""), "text": x.get("snippet", "")}
+        for x in r.json().get("organic", [])[:k]
+    ]
+
+def _duckduckgo(query: str, k: int):
+    """Keyless fallback. Requires: pip install ddgs"""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return None
+    with DDGS() as ddgs:
+        return [
+            {"title": x.get("title", ""), "url": x.get("href", ""), "text": x.get("body", "")}
+            for x in ddgs.text(query, max_results=k)
+        ]
+
+MEDICAL_SITES = (
+    "site:nice.org.uk OR site:uptodate.com OR site:pubmed.ncbi.nlm.nih.gov OR "
+    "site:cochranelibrary.com OR site:who.int OR site:cpsp.edu.pk OR "
+    "site:facs.org OR site:nejm.org OR site:bmj.com"
+)
+
+def build_search_query(question: str, q_type: str, restrict: bool) -> str:
+    q = re.sub(r"(?m)^\s*[A-Ea-e][.)\s].+$", "", question)   # drop MCQ options
+    q = re.sub(r"\s+", " ", q).strip()[:300]
+    if q_type == "fcps2_surgery":
+        q = f"{q} guideline management surgery"
+    return f"{q} ({MEDICAL_SITES})" if restrict else q
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def web_search(query: str, k: int = SEARCH_TOP_K):
+    """Try providers in order; return (results, provider_name, error)."""
+    for name, fn in (("Tavily", _tavily), ("Serper", _serper), ("DuckDuckGo", _duckduckgo)):
+        try:
+            res = fn(query, k)
+        except Exception as e:
+            continue
+        if res:
+            return res, name, None
+    return [], None, "No search provider available (set TAVILY_API_KEY / SERPER_API_KEY, or pip install ddgs)."
+
+def format_web_context(results: list) -> str:
+    blocks = []
+    for i, r in enumerate(results, 1):
+        txt = re.sub(r"\s+", " ", r["text"]).strip()[:SEARCH_SNIPPET]
+        blocks.append(f"[{i}] {r['title']} — {r['url']}\n{txt}")
+    return "\n\n".join(blocks)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  RESOURCE LOADING
 # ═══════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner=False)
@@ -446,8 +658,11 @@ _CLEAN = [
     (r"(?i)\bthe (provided )?(context|reference[s]?)\b",           ""),
     (r"\n{3,}",                                                    "\n\n"),
 ]
-def clean_response(text: str) -> str:
+def clean_response(text: str, keep_refs: bool = False) -> str:
+    """keep_refs=True when web search was used — don't strip real citations."""
     for pattern, repl in _CLEAN:
+        if keep_refs and ("^sources?" in pattern or "^references?" in pattern):
+            continue
         text = re.sub(pattern, repl, text)
     return text.strip()
 
@@ -455,10 +670,24 @@ def clean_response(text: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 #  AI ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
-def ask_ai(question: str, history: list, q_type: str):
-    """Retrieve context, select specialist prompt, stream response."""
-    context    = get_context(question, q_type)
-    sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
+def ask_ai(question: str, history: list, q_type: str,
+           web_context: str = "", fcps_mode: str = "Auto"):
+    """Retrieve context (books + optional web), select prompt, stream response."""
+    context = get_context(question, q_type)
+
+    if q_type == "fcps2_surgery":
+        sys_prompt = fcps_system_prompt(fcps_mode)
+    else:
+        sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
+
+    if web_context:
+        sys_prompt += (
+            "\n\nWEB RESULTS ARE PROVIDED. Use them for anything current — guidelines, "
+            "drug approvals, exam-format or CPSP notices, recent evidence. Prefer them over "
+            "your own recall when they conflict, and cite inline as [1], [2] matching the "
+            "numbered results. If the results don't answer the question, say so and answer "
+            "from clinical knowledge. Do not fabricate citations or URLs."
+        )
 
     messages = [{"role": "system", "content": sys_prompt}]
 
@@ -470,10 +699,11 @@ def ask_ai(question: str, history: list, q_type: str):
         ]
 
     ctx_block = f"\n\nREFERENCE CONTEXT:\n{context}" if context else ""
+    web_block = f"\n\nWEB RESULTS:\n{web_context}" if web_context else ""
     messages.append({
         "role": "user",
         "content": (
-            f"QUESTION:\n{question}{ctx_block}\n\n"
+            f"QUESTION:\n{question}{ctx_block}{web_block}\n\n"
             "Answer exactly what was asked — directly and concisely. "
             "Do not add unrequested sections. Match the depth to the question."
         ),
@@ -494,6 +724,10 @@ def ask_ai(question: str, history: list, q_type: str):
 if "messages" not in st.session_state: st.session_state.messages = []
 if "history"  not in st.session_state: st.session_state.history  = []
 if "prefill"  not in st.session_state: st.session_state.prefill  = None
+if "web_on"   not in st.session_state: st.session_state.web_on   = False
+if "web_med"  not in st.session_state: st.session_state.web_med  = True
+if "fcps_on"  not in st.session_state: st.session_state.fcps_on  = False
+if "fcps_mode" not in st.session_state: st.session_state.fcps_mode = "Auto"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -502,6 +736,35 @@ if "prefill"  not in st.session_state: st.session_state.prefill  = None
 with st.sidebar:
     st.markdown("### 🩺 MedConsult AI v3.0")
     st.markdown(f"**Questions answered:** {len(st.session_state.history)}")
+    st.divider()
+
+    # ── Internet search ───────────────────────────────────────────────────────
+    st.markdown("#### 🌐 Internet Search")
+    st.session_state.web_on = st.toggle(
+        "Search the web", value=st.session_state.web_on,
+        help="Fetches live results and grounds the answer in them with [1][2] citations.",
+    )
+    if st.session_state.web_on:
+        st.session_state.web_med = st.checkbox(
+            "Restrict to medical sources", value=st.session_state.web_med,
+            help="NICE, PubMed, Cochrane, WHO, CPSP, BMJ, NEJM, ACS.",
+        )
+
+    st.divider()
+
+    # ── FCPS-II skill ─────────────────────────────────────────────────────────
+    st.markdown("#### 🇵🇰 FCPS-II General Surgery")
+    st.session_state.fcps_on = st.toggle(
+        "FCPS-II tutor mode", value=st.session_state.fcps_on,
+        help="Loads the FCPS Part II General Surgery Mastery skill (CPSP-aligned).",
+    )
+    if st.session_state.fcps_on:
+        st.session_state.fcps_mode = st.selectbox(
+            "Session mode", list(FCPS_MODES.keys()),
+            index=list(FCPS_MODES.keys()).index(st.session_state.fcps_mode),
+        )
+        st.caption("✅ SKILL.md loaded" if SKILL_PATH.exists() else "⚠️ SKILL.md not found — using built-in copy")
+
     st.divider()
     if st.button("🗑️ Clear Conversation", use_container_width=True):
         st.session_state.messages = []
@@ -606,12 +869,33 @@ if st.session_state.prefill:
 #  HANDLE NEW QUESTION
 # ═══════════════════════════════════════════════════════════════════════════════
 if prompt:
-    q_type = classify_question(prompt)
+    q_type = "fcps2_surgery" if st.session_state.fcps_on else classify_question(prompt)
     label, badge_class = _QTYPE_LABELS[q_type]
 
     # Render user message
     render_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # ── Internet search ───────────────────────────────────────────────────────
+    web_context, web_results = "", []
+    if st.session_state.web_on:
+        searching = st.empty()
+        searching.markdown("""
+        <div class="thinking">
+            <div style="display:flex;gap:5px"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+            <div>Searching the web…</div>
+        </div>""", unsafe_allow_html=True)
+        query = build_search_query(prompt, q_type, st.session_state.web_med)
+        web_results, provider, err = web_search(query, SEARCH_TOP_K)
+        # Retry unrestricted if the medical-site filter returned nothing
+        if not web_results and st.session_state.web_med:
+            web_results, provider, err = web_search(
+                build_search_query(prompt, q_type, False), SEARCH_TOP_K)
+        searching.empty()
+        if web_results:
+            web_context = format_web_context(web_results)
+        elif err:
+            st.warning(f"🌐 {err}")
 
     # Thinking indicator
     thinking = st.empty()
@@ -627,7 +911,13 @@ if prompt:
 
     # Stream response
     try:
-        stream = ask_ai(prompt, st.session_state.history, q_type)
+        stream = ask_ai(
+            prompt,
+            st.session_state.history,
+            q_type,
+            web_context = web_context,
+            fcps_mode   = st.session_state.fcps_mode,
+        )
     except Exception as e:
         thinking.empty()
         st.error(f"⚠️ API error: {e}")
@@ -646,8 +936,13 @@ if prompt:
             token          = chunk.choices[0].delta.content or ""
             full_response += token
             stream_box.markdown(full_response + "▌")
-        final = clean_response(full_response)
+        final = clean_response(full_response, keep_refs=bool(web_results))
         stream_box.markdown(final)
+
+        if web_results:
+            with st.expander(f"🌐 {len(web_results)} web sources"):
+                for i, r in enumerate(web_results, 1):
+                    st.markdown(f"**[{i}]** [{r['title'] or r['url']}]({r['url']})")
 
     # Persist to session
     st.session_state.messages.append({
