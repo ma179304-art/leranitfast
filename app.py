@@ -5,6 +5,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 import re, os, json, textwrap
 from pathlib import Path
+from datetime import date
 import requests
 import streamlit as st
 from sentence_transformers import SentenceTransformer
@@ -43,6 +44,7 @@ RAG_TOP_K     = 10        # retrieve more chunks → richer context
 MAX_TOKENS    = 4096      # longer, comprehensive answers
 TEMPERATURE   = 0.20      # factual & consistent
 HISTORY_TURNS = 6         # conversation pairs to include
+HISTORY_ANSWER_CHARS = 2500  # truncate stored answers when re-feeding as context
 SCORE_THRESH  = 0.30      # minimum Qdrant relevance score
 
 # ── WEB SEARCH ────────────────────────────────────────────────────────────────
@@ -640,6 +642,49 @@ def build_closer(mode: str, refs_on: bool, has_web: bool) -> str:
     return closer
 
 
+def candidate_profile() -> str:
+    """Exam date, weak topics and covered topics — injected so the tutor calibrates."""
+    bits = []
+    days = days_to_exam()
+    if days is not None:
+        bits.append(f"Exam date: {st.session_state.exam_date} ({days} days remaining).")
+    if st.session_state.weak_topics:
+        bits.append("Known weak areas: " + ", ".join(st.session_state.weak_topics) + ".")
+    if st.session_state.covered:
+        recent = list(st.session_state.covered)[-12:]
+        bits.append("Already covered this session: " + ", ".join(recent) + ".")
+    if not bits:
+        return ""
+    return ("\n\nCANDIDATE PROFILE\n" + " ".join(bits) +
+            "\nWeight your answer accordingly: prioritise weak areas, avoid re-teaching "
+            "covered ground in depth, and scale scope to the time remaining. "
+            "Do not stall to ask for details you already have here.")
+
+
+def days_to_exam():
+    d = st.session_state.get("exam_date")
+    if not d:
+        return None
+    return (d - date.today()).days
+
+
+def export_session() -> str:
+    """Whole conversation as a revision-ready markdown file."""
+    lines = [
+        "# MedConsult AI — FCPS-II Revision Session",
+        f"_Exported {date.today().isoformat()} · model: {st.session_state.get('model','')}_",
+    ]
+    days = days_to_exam()
+    if days is not None:
+        lines.append(f"_Exam in {days} days_")
+    if st.session_state.weak_topics:
+        lines.append("\n**Weak areas flagged:** " + ", ".join(st.session_state.weak_topics))
+    lines.append("\n---\n")
+    for i, h in enumerate(st.session_state.history, 1):
+        lines += [f"## {i}. {h['q'].strip()[:200]}", "", h["a"], "\n---\n"]
+    return "\n".join(lines)
+
+
 def detect_fcps_mode(question: str, chosen: str) -> str:
     """In Auto, infer the intended mode from the phrasing of the question."""
     if chosen != "Auto":
@@ -811,12 +856,24 @@ def get_context(question: str, q_type: str) -> str:
     enriched = enrich_query(question, q_type)
     vec      = embed_model.encode(enriched).tolist()
 
-    hits = qdrant_client.search(
-        collection_name = COLLECTION,
-        query_vector    = vec,
-        limit           = RAG_TOP_K,
-        score_threshold = SCORE_THRESH,
-    )
+    try:
+        # qdrant-client ≥1.10
+        hits = qdrant_client.query_points(
+            collection_name = COLLECTION,
+            query           = vec,
+            limit           = RAG_TOP_K,
+            score_threshold = SCORE_THRESH,
+        ).points
+    except AttributeError:
+        # legacy client
+        hits = qdrant_client.search(
+            collection_name = COLLECTION,
+            query_vector    = vec,
+            limit           = RAG_TOP_K,
+            score_threshold = SCORE_THRESH,
+        )
+    except Exception:
+        return ""
 
     seen, parts = set(), []
     for h in hits:
@@ -863,7 +920,7 @@ def ask_ai(question: str, history: list, q_type: str,
     active_mode = detect_fcps_mode(question, fcps_mode) if q_type == "fcps2_surgery" else fcps_mode
 
     if q_type == "fcps2_surgery":
-        sys_prompt = fcps_system_prompt(active_mode)
+        sys_prompt = fcps_system_prompt(active_mode) + candidate_profile()
     else:
         sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
 
@@ -878,11 +935,15 @@ def ask_ai(question: str, history: list, q_type: str,
 
     messages = [{"role": "system", "content": sys_prompt}]
 
-    # Include recent conversation history for multi-turn context
+    # Include recent conversation history. Answers are truncated — full FCPS blocks
+    # run to 8k tokens each and would exhaust the context window within a few turns.
     for h in history[-HISTORY_TURNS:]:
+        prior = h["a"]
+        if len(prior) > HISTORY_ANSWER_CHARS:
+            prior = prior[:HISTORY_ANSWER_CHARS] + "\n…[earlier answer truncated]"
         messages += [
-            {"role": "user",      "content": h["q"]},
-            {"role": "assistant", "content": h["a"]},
+            {"role": "user",      "content": h["q"][:1500]},
+            {"role": "assistant", "content": prior},
         ]
 
     ctx_block = f"\n\nREFERENCE CONTEXT:\n{context}" if context else ""
@@ -926,6 +987,10 @@ if "fcps_on"  not in st.session_state: st.session_state.fcps_on  = False
 if "fcps_mode" not in st.session_state: st.session_state.fcps_mode = "Auto"
 if "model"    not in st.session_state: st.session_state.model    = resolve_model()
 if "refs_on"  not in st.session_state: st.session_state.refs_on  = True
+if "exam_date"   not in st.session_state: st.session_state.exam_date   = None
+if "weak_topics" not in st.session_state: st.session_state.weak_topics = []
+if "covered"     not in st.session_state: st.session_state.covered     = []
+if "last_q"      not in st.session_state: st.session_state.last_q      = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -987,11 +1052,58 @@ with st.sidebar:
         )
         st.caption("✅ SKILL.md loaded" if SKILL_PATH.exists() else "⚠️ SKILL.md not found — using built-in copy")
 
+        # ── Exam countdown ────────────────────────────────────────────────────
+        use_date = st.checkbox("Set exam date", value=st.session_state.exam_date is not None)
+        if use_date:
+            st.session_state.exam_date = st.date_input(
+                "FCPS-II exam", value=st.session_state.exam_date or date.today(),
+                min_value=date.today(),
+            )
+            d = days_to_exam()
+            if d is not None:
+                phase = ("🔴 Final revision" if d <= 14 else
+                         "🟠 Exam conversion" if d <= 45 else
+                         "🟡 Consolidation"   if d <= 120 else "🟢 Foundation")
+                st.metric("Days remaining", d, delta=phase, delta_color="off")
+        else:
+            st.session_state.exam_date = None
+
+        # ── Weak-area log ─────────────────────────────────────────────────────
+        with st.expander(f"🎯 Weak areas ({len(st.session_state.weak_topics)})"):
+            new_weak = st.text_input("Add topic", key="weak_in",
+                                     placeholder="e.g. pancreatitis severity scoring")
+            c1, c2 = st.columns(2)
+            if c1.button("Add", use_container_width=True) and new_weak.strip():
+                t = new_weak.strip()
+                if t not in st.session_state.weak_topics:
+                    st.session_state.weak_topics.append(t)
+                st.rerun()
+            if c2.button("Clear", use_container_width=True):
+                st.session_state.weak_topics = []
+                st.rerun()
+            for t in st.session_state.weak_topics:
+                st.markdown(f"- {t}")
+
     st.divider()
     if st.button("🗑️ Clear Conversation", use_container_width=True):
         st.session_state.messages = []
         st.session_state.history  = []
+        st.session_state.covered  = []
         st.rerun()
+
+    if st.session_state.history:
+        st.download_button(
+            "⬇️ Export session (.md)",
+            data      = export_session(),
+            file_name = f"fcps-revision-{date.today().isoformat()}.md",
+            mime      = "text/markdown",
+            use_container_width=True,
+        )
+        if st.button("🔄 Regenerate last answer", use_container_width=True):
+            last = st.session_state.history.pop()
+            st.session_state.messages = st.session_state.messages[:-2]
+            st.session_state.prefill  = last["q"]
+            st.rerun()
     st.divider()
     st.markdown("""
 **Auto-detected question types:**
@@ -1055,6 +1167,20 @@ if not st.session_state.messages:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    if st.session_state.fcps_on:
+        st.markdown("**Quick start**")
+        qc = st.columns(4)
+        _quick = [
+            ("📅 Study plan",  "Make me a study plan for FCPS-II General Surgery."),
+            ("🎯 Quiz me",     "Quiz me with 10 mixed FCPS-II General Surgery MCOs."),
+            ("🏥 TOACS",       "Give me a TOACS station."),
+            ("⚡ Last-minute", "Last-minute revision: surgical emergencies."),
+        ]
+        for col, (lbl, q) in zip(qc, _quick):
+            if col.button(lbl, use_container_width=True):
+                st.session_state.prefill = q
+                st.rerun()
 
 
 # ── Render a message ──────────────────────────────────────────────────────────
@@ -1186,3 +1312,28 @@ if prompt:
         "q_type":  q_type,
     })
     st.session_state.history.append({"q": prompt, "a": final})
+    st.session_state.last_q = prompt
+
+    # Track covered ground so the tutor doesn't re-teach it
+    topic = re.sub(r"\s+", " ", prompt).strip()[:60]
+    if topic and topic not in st.session_state.covered:
+        st.session_state.covered.append(topic)
+
+    # ── Follow-up actions ─────────────────────────────────────────────────────
+    if st.session_state.fcps_on:
+        f1, f2, f3, f4 = st.columns(4)
+        follow = [
+            (f1, "🎯 Quiz me on this", f"Quiz me with 10 MCOs on: {topic}"),
+            (f2, "🗣️ Viva me",         f"Viva mode on: {topic}"),
+            (f3, "📝 SAQ",             f"SAQ mode on: {topic}"),
+            (f4, "⚡ Condense",        f"Last-minute revision version of: {topic}"),
+        ]
+        for col, lbl, q in follow:
+            if col.button(lbl, use_container_width=True, key=f"f_{lbl}_{len(st.session_state.history)}"):
+                st.session_state.prefill = q
+                st.rerun()
+
+        if st.button("🚩 Flag this as a weak area", key=f"w_{len(st.session_state.history)}"):
+            if topic not in st.session_state.weak_topics:
+                st.session_state.weak_topics.append(topic)
+            st.rerun()
