@@ -511,6 +511,86 @@ FCPS_MODES = {
     "Study plan":          "Use 'Make me a plan' mode. Build a calendar-style plan backward from the exam date. Do not stall on missing details — assume, state the assumption, continue.",
 }
 
+FCPS_CLOSERS = {
+
+"Teach me": """Produce a COMPLETE FCPS-II teaching block on this topic. Emit every one of these
+markdown headers in this order — do not omit or merge any, do not summarise:
+
+## Definition
+One or two lines.
+
+## Classification
+Markdown table. Include histological and molecular/staging subtypes where they exist.
+
+## Etiology & Risk Factors
+Table split into non-modifiable vs modifiable.
+
+## Pathophysiology
+Concise — 4–8 lines or a numbered cascade.
+
+## Clinical Features
+Three labelled groups: Symptoms · Examination findings · ⚠️ Red flags.
+
+## Investigations
+State explicitly: first-line · confirmatory/most useful · staging or severity · preoperative workup.
+Say which test is WRONG and why, where trainees commonly err.
+
+## Differential Diagnosis
+Focused table: differential vs discriminating feature.
+
+## Management
+Sub-headed: Initial stabilisation → Medical treatment → Indications for intervention →
+Definitive surgical treatment (named operations) → Alternatives → Special situations
+(pregnancy, elderly, recurrent, metastatic, resource-limited). Use an explicit
+algorithm with arrows. Include drug names and doses. Table when comparing regimens.
+
+## Complications
+Early vs late. Include named nerve/vessel injuries for operative topics.
+
+## Prognosis & Follow-up
+
+## 🔑 FCPS Pearls
+5–7 bullets — the points that separate a strong candidate from a borderline one.
+
+## 🎯 Viva Questions
+6–8 questions, each with a one-line expected answer direction.
+
+Be dense and high-yield. No filler sentences, no patient-leaflet tone. This is
+postgraduate exam preparation — a short paragraph is a failed answer.""",
+
+"Quiz me (MCOs)": """Generate exam-grade clinical MCOs on this topic. Vignette stem, 4–5 plausible options,
+one best answer. Number them. Do NOT reveal any answer, explanation or hint now — wait
+for the candidate to commit. End by asking for their answers.""",
+
+"Rapid fire": """Ask ONE question only. Wait for the answer. Do not answer it yourself and do not
+continue to a second question.""",
+
+"TOACS station": """Generate ONE realistic TOACS station: station type (interactive/static), candidate
+instructions, the stem/image description, time allowed, and the tasks. Do not give the
+model answer until the candidate responds.""",
+
+"Viva mode": """Act as the FCPS examiner. Ask one question, wait, then escalate difficulty based on the
+answer. Open with an entry-level question on this topic. Do not lecture.""",
+
+"Long case": """Run a long case on this topic. Present the case, then ask the candidate for their
+history-taking priorities before revealing more. Proceed stepwise — do not dump the
+whole case, examination, investigations and management at once.""",
+
+"SAQ mode": """Write a realistic FCPS-II SAQ on this topic with mark allocation shown per part.
+Give the question ONLY. Do not answer it — you will mark the candidate's attempt.""",
+
+"Last-minute revision": """High-yield revision only. Emit: a one-line definition · the classification table ·
+the management algorithm in arrow form · drug doses · the 8–10 most examinable facts ·
+the 5 classic traps candidates fall for. No pathophysiology prose, no background.""",
+
+"Study plan": """Build a calendar-style plan working backward from the exam date. Emit a week-by-week
+table (week · topics · question volume · clinical/TOACS drill · revision target).
+If the exam date or available hours weren't given, assume a reasonable value, state the
+assumption in one line, and continue — do not stall by asking questions.""",
+}
+FCPS_CLOSERS["Auto"] = FCPS_CLOSERS["Teach me"]
+
+
 def detect_fcps_mode(question: str, chosen: str) -> str:
     """In Auto, infer the intended mode from the phrasing of the question."""
     if chosen != "Auto":
@@ -731,8 +811,10 @@ def ask_ai(question: str, history: list, q_type: str,
     """Retrieve context (books + optional web), select prompt, stream response."""
     context = get_context(question, q_type)
 
+    active_mode = detect_fcps_mode(question, fcps_mode) if q_type == "fcps2_surgery" else fcps_mode
+
     if q_type == "fcps2_surgery":
-        sys_prompt = fcps_system_prompt(detect_fcps_mode(question, fcps_mode))
+        sys_prompt = fcps_system_prompt(active_mode)
     else:
         sys_prompt = SYSTEM_PROMPTS.get(q_type, SYSTEM_PROMPTS["general_clinical"])
 
@@ -756,13 +838,18 @@ def ask_ai(question: str, history: list, q_type: str,
 
     ctx_block = f"\n\nREFERENCE CONTEXT:\n{context}" if context else ""
     web_block = f"\n\nWEB RESULTS:\n{web_context}" if web_context else ""
-    messages.append({
-        "role": "user",
-        "content": (
-            f"QUESTION:\n{question}{ctx_block}{web_block}\n\n"
+
+    if q_type == "fcps2_surgery":
+        closing = FCPS_CLOSERS.get(active_mode, FCPS_CLOSERS["Teach me"])
+    else:
+        closing = (
             "Answer exactly what was asked — directly and concisely. "
             "Do not add unrequested sections. Match the depth to the question."
-        ),
+        )
+
+    messages.append({
+        "role": "user",
+        "content": f"QUESTION:\n{question}{ctx_block}{web_block}\n\n{closing}",
     })
 
     return groq_client.chat.completions.create(
