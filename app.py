@@ -1,4 +1,4 @@
-# ═══════════════════════════════════════════════════════════════════════════════
+=# ═══════════════════════════════════════════════════════════════════════════════
 #  MEDCONSULT AI  v3.0
 #  Elite Clinical Intelligence — Exam-Optimised + Consultant-Grade Management
 #  Stack: Streamlit · Groq LLaMA 3.3 70B · Qdrant Cloud · Sentence-Transformers
@@ -511,6 +511,40 @@ FCPS_MODES = {
     "Study plan":          "Use 'Make me a plan' mode. Build a calendar-style plan backward from the exam date. Do not stall on missing details — assume, state the assumption, continue.",
 }
 
+FCPS_REFERENCE_RULE = """
+
+REFERENCING REQUIREMENT
+Support your answer with sources. Rules:
+• Attach a source inline, in brackets, to every major claim block — classification,
+  investigation choice, management step, drug dose, staging, threshold or cut-off.
+  Example: "...neoadjuvant chemotherapy is indicated [Bailey & Love, Breast chapter;
+  NCCN Breast Cancer guideline]."
+• End the answer with a '## 📚 References' section listing every source used.
+• Cite by NAME and, where relevant, the guideline year or trial name:
+  – Textbooks: Bailey & Love, Schwartz, Sabiston, Farquharson — name the chapter/topic.
+  – Guidelines: NICE, NCCN, ESMO, WSES, ATLS, SAGES, IDSA, Tokyo Guidelines, CPSP.
+  – Landmark trials: cite by trial acronym (e.g. ACOSOG Z0011, CRASH-2, FOxTROT).
+• Where guidance differs between sources or between international and Pakistani/CPSP
+  practice, say so explicitly and cite both.
+
+ACCURACY RULES — these override the requirement above:
+• NEVER invent page numbers, DOIs, PMIDs, ISBNs or URLs. Do not give a page number at all
+  unless it came from supplied context; textbook editions differ.
+• Cite a specific edition ONLY if you are certain of it; otherwise name the book without
+  an edition number.
+• Do not attribute a claim to a guideline you are not confident actually says it. If you
+  are unsure of the source, write the claim and mark it '[standard teaching — verify]'
+  rather than guessing an attribution.
+• If a recommendation may have changed recently, flag it: '⚠️ verify against current
+  guideline'.
+• Never cite a trial you cannot name correctly."""
+
+FCPS_WEB_REFERENCE_RULE = """
+• Web results are supplied and numbered. For anything drawn from them, cite the number
+  inline as [1], [2] and reproduce the title and URL in the References section exactly as
+  given. Never alter a URL or invent one that is not in the supplied results."""
+
+
 FCPS_CLOSERS = {
 
 "Teach me": """Produce a COMPLETE FCPS-II teaching block on this topic. Emit every one of these
@@ -555,6 +589,9 @@ Early vs late. Include named nerve/vessel injuries for operative topics.
 ## 🎯 Viva Questions
 6–8 questions, each with a one-line expected answer direction.
 
+## 📚 References
+Every source used, listed by name.
+
 Be dense and high-yield. No filler sentences, no patient-leaflet tone. This is
 postgraduate exam preparation — a short paragraph is a failed answer.""",
 
@@ -589,6 +626,18 @@ If the exam date or available hours weren't given, assume a reasonable value, st
 assumption in one line, and continue — do not stall by asking questions.""",
 }
 FCPS_CLOSERS["Auto"] = FCPS_CLOSERS["Teach me"]
+
+# Modes where the model must NOT reveal content yet — referencing would leak the answer.
+_NO_REF_MODES = {"Quiz me (MCOs)", "Rapid fire", "TOACS station", "Viva mode",
+                 "Long case", "SAQ mode"}
+
+def build_closer(mode: str, refs_on: bool, has_web: bool) -> str:
+    closer = FCPS_CLOSERS.get(mode, FCPS_CLOSERS["Teach me"])
+    if refs_on and mode not in _NO_REF_MODES:
+        closer += FCPS_REFERENCE_RULE
+        if has_web:
+            closer += FCPS_WEB_REFERENCE_RULE
+    return closer
 
 
 def detect_fcps_mode(question: str, chosen: str) -> str:
@@ -807,7 +856,7 @@ def clean_response(text: str, keep_refs: bool = False) -> str:
 #  AI ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
 def ask_ai(question: str, history: list, q_type: str,
-           web_context: str = "", fcps_mode: str = "Auto"):
+           web_context: str = "", fcps_mode: str = "Auto", refs_on: bool = True):
     """Retrieve context (books + optional web), select prompt, stream response."""
     context = get_context(question, q_type)
 
@@ -840,12 +889,16 @@ def ask_ai(question: str, history: list, q_type: str,
     web_block = f"\n\nWEB RESULTS:\n{web_context}" if web_context else ""
 
     if q_type == "fcps2_surgery":
-        closing = FCPS_CLOSERS.get(active_mode, FCPS_CLOSERS["Teach me"])
+        closing = build_closer(active_mode, refs_on, bool(web_context))
     else:
         closing = (
             "Answer exactly what was asked — directly and concisely. "
             "Do not add unrequested sections. Match the depth to the question."
         )
+        if refs_on:
+            closing += FCPS_REFERENCE_RULE
+            if web_context:
+                closing += FCPS_WEB_REFERENCE_RULE
 
     messages.append({
         "role": "user",
@@ -872,6 +925,7 @@ if "web_med"  not in st.session_state: st.session_state.web_med  = True
 if "fcps_on"  not in st.session_state: st.session_state.fcps_on  = False
 if "fcps_mode" not in st.session_state: st.session_state.fcps_mode = "Auto"
 if "model"    not in st.session_state: st.session_state.model    = resolve_model()
+if "refs_on"  not in st.session_state: st.session_state.refs_on  = True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -905,6 +959,18 @@ with st.sidebar:
             "Restrict to medical sources", value=st.session_state.web_med,
             help="NICE, PubMed, Cochrane, WHO, CPSP, BMJ, NEJM, ACS.",
         )
+
+    st.divider()
+
+    # ── References ────────────────────────────────────────────────────────────
+    st.markdown("#### 📚 References")
+    st.session_state.refs_on = st.toggle(
+        "Cite sources", value=st.session_state.refs_on,
+        help="Inline citations plus a References section. Textbooks and guidelines are "
+             "cited by name; URLs appear only when web search supplies them.",
+    )
+    if st.session_state.refs_on and not st.session_state.web_on:
+        st.caption("💡 Turn on web search for verifiable guideline citations with links.")
 
     st.divider()
 
@@ -1073,6 +1139,7 @@ if prompt:
             q_type,
             web_context = web_context,
             fcps_mode   = st.session_state.fcps_mode,
+            refs_on     = st.session_state.refs_on,
         )
     except Exception as e:
         thinking.empty()
@@ -1101,7 +1168,10 @@ if prompt:
             token          = chunk.choices[0].delta.content or ""
             full_response += token
             stream_box.markdown(full_response + "▌")
-        final = clean_response(full_response, keep_refs=bool(web_results))
+        final = clean_response(
+            full_response,
+            keep_refs = bool(web_results) or st.session_state.refs_on,
+        )
         stream_box.markdown(final)
 
         if web_results:
