@@ -1,4 +1,4 @@
-=# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 #  MEDCONSULT AI  v3.0
 #  Elite Clinical Intelligence — Exam-Optimised + Consultant-Grade Management
 #  Stack: Streamlit · Groq LLaMA 3.3 70B · Qdrant Cloud · Sentence-Transformers
