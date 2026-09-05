@@ -14,7 +14,7 @@ from groq import Groq
 
 # ── PAGE CONFIG ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="MedConsult AI | Elite Clinical Intelligence",
+    page_title="MedConsult AI | Elite Clinical Intelligence Created by Dr Muhammad Asif",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="collapsed",
